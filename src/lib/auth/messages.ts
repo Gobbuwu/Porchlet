@@ -2,6 +2,7 @@
 // Error codes: https://supabase.com/docs/guides/auth/debugging/error-codes
 
 export const TOO_MANY_ATTEMPTS = "Too many attempts, try again later.";
+export const GENERIC_ERROR = "Something went wrong. Try again.";
 
 type AuthErrorLike = { status?: number; code?: string };
 
@@ -26,6 +27,6 @@ export function authErrorMessage(error: AuthErrorLike): string {
     case "signup_disabled":
       return "Sign-up is turned off on this site.";
     default:
-      return "Something went wrong. Try again.";
+      return GENERIC_ERROR;
   }
 }

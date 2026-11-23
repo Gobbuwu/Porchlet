@@ -12,5 +12,6 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0011](0011-owasp-asvs-level-2.md) | Secure-coding standard: OWASP ASVS 5.0.0 Level 2 | Accepted |
 | [0012](0012-ci-pipeline.md) | CI pipeline: jobs, tools and lockdown | Proposed (PR 2) |
 | [0014](0014-server-side-auth.md) | Auth on the server, HttpOnly session cookies, nonce CSP | Proposed (M1 auth PR) |
+| [0015](0015-own-auth-rate-limiter.md) | Porchlet counts auth attempts per visitor IP in Postgres | Proposed (M1 auth PR) |
 
 ADRs 0006-0010 are written when their milestone starts (see the M0 doc).

@@ -1,7 +1,9 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { authErrorMessage } from "@/lib/auth/messages";
+import { authErrorMessage, GENERIC_ERROR, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
+import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
 import type { FormState } from "@/lib/auth/types";
 import { createClient } from "@/lib/supabase/server";
@@ -15,6 +17,19 @@ const field = (formData: FormData, name: string) => {
   return typeof value === "string" ? value : "";
 };
 
+// Counts this attempt against Porchlet's per-visitor limits (ADR 0015). Returns a message for the
+// form when the visitor is over a limit or the limiter can't answer, else null.
+async function limitError(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  rules: readonly Rule[],
+  record: boolean,
+): Promise<string | null> {
+  const result = await checkLimits(supabase, clientIp(await headers()), rules, record);
+  if (result === "limited") return TOO_MANY_ATTEMPTS;
+  if (result === "unavailable") return GENERIC_ERROR;
+  return null;
+}
+
 function logAuthError(action: string, error: { status?: number; code?: string }) {
   // Status and code only: never the email or the password.
   console.warn(`auth ${action} failed: status=${error.status} code=${error.code}`);
@@ -23,6 +38,8 @@ function logAuthError(action: string, error: { status?: number; code?: string })
 export async function signUp(_state: FormState, formData: FormData): Promise<FormState> {
   const email = field(formData, "email").trim();
   const supabase = await createClient();
+  const limited = await limitError(supabase, RULES.signUp, true);
+  if (limited) return { error: limited, email };
   const { error } = await supabase.auth.signUp({
     email,
     password: field(formData, "password"),
@@ -39,12 +56,20 @@ export async function signUp(_state: FormState, formData: FormData): Promise<For
 export async function logIn(_state: FormState, formData: FormData): Promise<FormState> {
   const email = field(formData, "email").trim();
   const supabase = await createClient();
+  // Only failures count, so people who share an IP (an office, a campus) can all still log in.
+  const rules = RULES.loginFailures(email);
+  const limited = await limitError(supabase, rules, false);
+  if (limited) return { error: limited, email };
   const { error } = await supabase.auth.signInWithPassword({
     email,
     password: field(formData, "password"),
   });
   if (error) {
     logAuthError("login", error);
+    if (error.status !== 429) {
+      const after = await limitError(supabase, rules, true);
+      if (after === GENERIC_ERROR) return { error: after, email };
+    }
     return { error: authErrorMessage(error), email };
   }
   redirect(safeNext(field(formData, "next")));
@@ -53,6 +78,8 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
 export async function requestReset(_state: FormState, formData: FormData): Promise<FormState> {
   const email = field(formData, "email").trim();
   const supabase = await createClient();
+  const limited = await limitError(supabase, RULES.reset, true);
+  if (limited) return { error: limited, email };
   const { error } = await supabase.auth.resetPasswordForEmail(email);
   if (error) {
     logAuthError("reset-request", error);
@@ -63,6 +90,8 @@ export async function requestReset(_state: FormState, formData: FormData): Promi
 
 export async function setNewPassword(_state: FormState, formData: FormData): Promise<FormState> {
   const supabase = await createClient();
+  const limited = await limitError(supabase, RULES.newPassword, true);
+  if (limited) return { error: limited };
   const { error } = await supabase.auth.updateUser({ password: field(formData, "password") });
   if (error) {
     logAuthError("reset-update", error);
@@ -86,6 +115,8 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
     return { error: "This link is not valid. Ask for a new one." };
   }
   const supabase = await createClient();
+  const limited = await limitError(supabase, RULES.verify, true);
+  if (limited) return { error: limited };
   const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
   if (error) {
     logAuthError(`verify-${type}`, error);
