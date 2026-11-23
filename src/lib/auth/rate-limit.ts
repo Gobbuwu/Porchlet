@@ -70,7 +70,7 @@ export async function checkLimits(
   for (const { rule, data, error } of results) {
     if (error || typeof data !== "number") {
       // Never log the key or the IP.
-      console.error(`rate limit unavailable: ${error ? `code=${error.code}` : "key refused"}`);
+      console.error(`rate limit unavailable: ${error ? `code=${error.code || "none (network?)"}` : "key refused"}`);
       return "unavailable";
     }
     if (record ? data > rule.limit : data >= rule.limit) limited = true;
