@@ -189,8 +189,9 @@ jobs:
       - name: Cross-check commits scanned
         run: |
           scanned=$(grep -oE '[0-9]+ commits scanned' "$RUNNER_TEMP/gitleaks.log" | grep -oE '^[0-9]+')
-          all=$(git rev-list --count --all)
-          echo "gitleaks scanned $scanned commits; git rev-list --all has $all"
+          # gitleaks reads patches with git log -p, which shows none for merge commits.
+          all=$(git rev-list --count --no-merges --all)
+          echo "gitleaks scanned $scanned commits; git has $all non-merge commits"
           [ "$scanned" = "$all" ]
 
   deps:
@@ -225,8 +226,9 @@ jobs:
       - name: OSV-Scanner
         run: |
           rc=0
-          "$RUNNER_TEMP/osv-scanner" scan source --format=json -L package-lock.json > "$RUNNER_TEMP/osv.json" || rc=$?
-          python3 scripts/ci/osv-summary.py "$RUNNER_TEMP/osv.json" package-lock.json
+          "$RUNNER_TEMP/osv-scanner" scan source --format=json -L package-lock.json \
+            > "$RUNNER_TEMP/osv.json" 2> >(tee "$RUNNER_TEMP/osv.log" >&2) || rc=$?
+          python3 -I scripts/ci/osv-summary.py "$RUNNER_TEMP/osv.json" "$RUNNER_TEMP/osv.log" package-lock.json
           exit "$rc"
 
   codeql:
