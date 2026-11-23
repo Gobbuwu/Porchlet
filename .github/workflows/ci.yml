@@ -221,7 +221,20 @@ jobs:
         run: npm audit --audit-level=low
       - name: npm registry signatures and provenance
         if: ${{ !cancelled() }}
-        run: npm audit signatures
+        # On cec6e39 this failed once with EMISSINGSIGNATUREKEY for a package
+        # whose key the registry does list, on a lockfile that passed 26 min
+        # earlier. On failure, print what the registry and npm saw, so the
+        # cause can be found instead of re-running.
+        run: |
+          if npm audit signatures; then exit 0; fi
+          echo "::group::Registry signing keys (now)"
+          curl -sS https://registry.npmjs.org/-/npm/v1/keys || true
+          echo
+          echo "::endgroup::"
+          echo "::group::npm debug log: fetches and errors"
+          grep -h -E "http fetch|error|verbose stack" ~/.npm/_logs/*-debug-0.log | tail -60 || true
+          echo "::endgroup::"
+          exit 1
       - name: Install OSV-Scanner (checksum pinned)
         if: ${{ !cancelled() }} # OSV still runs when npm audit fails
         run: |
