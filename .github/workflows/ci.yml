@@ -221,10 +221,9 @@ jobs:
         run: npm audit --audit-level=low
       - name: npm registry signatures and provenance
         if: ${{ !cancelled() }}
-        # On cec6e39 this failed once with EMISSINGSIGNATUREKEY for a package
-        # whose key the registry does list, on a lockfile that passed 26 min
-        # earlier. On failure, print what the registry and npm saw, so the
-        # cause can be found instead of re-running.
+        # On failure, print what the registry and npm saw, so the cause can be
+        # found instead of re-running. This found a stale CDN copy of
+        # napi-postinstall@0.3.8's attestations (see docs/milestones/M0.md).
         run: |
           if npm audit signatures 2> >(tee "$RUNNER_TEMP/sig.err" >&2); then exit 0; fi
           pkg=$(grep -oE '[^ ]+@[0-9][^ ]* has attestations' "$RUNNER_TEMP/sig.err" | head -1 | cut -d' ' -f1 || true)
