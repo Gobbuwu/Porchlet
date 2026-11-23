@@ -14,7 +14,7 @@
 // If 3 or 4 get 400 instead of 429 after 2 hit the limit, that header resets the limit and
 // can be used to get around it.
 
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 
 const [url, key] = process.argv.slice(2);
 if (!/^https:\/\/|^http:\/\/127\.0\.0\.1:/.test(url ?? "") || !key?.startsWith("sb_publishable_")) {
@@ -23,7 +23,7 @@ if (!/^https:\/\/|^http:\/\/127\.0\.0\.1:/.test(url ?? "") || !key?.startsWith("
 }
 
 const id = () => randomBytes(5).toString("hex");
-const fakeIp = () => `203.0.113.${1 + (randomBytes(1)[0] % 254)}`; // TEST-NET-3, never routed
+const fakeIp = () => `203.0.113.${randomInt(1, 255)}`; // TEST-NET-3, never routed
 
 async function login(email, headers = {}) {
   const res = await fetch(`${url}/auth/v1/token?grant_type=password`, {
