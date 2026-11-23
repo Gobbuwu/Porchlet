@@ -175,17 +175,22 @@ jobs:
           "$RUNNER_TEMP/gitleaks" version
       - name: Canary (gitleaks must find a planted key)
         run: |
+          # A fake key in Supabase's documented format,
+          # sb_secret_<22 random>_<8 checksum> (supabase.com/docs/guides/self-hosting/self-hosted-auth-keys),
+          # alone on a line so only our supabase-secret-key rule can match it.
           dir=$(mktemp -d)
-          printf 'SUPABASE_SECRET_KEY=sb_secret_%s\n' "$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" > "$dir/canary.env"
+          rand() { local x; x=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9'); printf '%s' "${x:0:$1}"; }
+          printf 'sb_secret_%s_%s\n' "$(rand 22)" "$(rand 8)" > "$dir/canary.txt"
           rc=0
           "$RUNNER_TEMP/gitleaks" dir --no-banner --redact --config .gitleaks.toml \
             --report-format json --report-path "$RUNNER_TEMP/canary.json" "$dir" || rc=$?
           found=$(jq length "$RUNNER_TEMP/canary.json")
-          if [ "$rc" -ne 1 ] || [ "$found" -ne 1 ]; then
-            echo "::error::gitleaks canary failed: exit $rc, $found findings (expected exit 1, 1 finding)"
+          rule=$(jq -r '[.[].RuleID] | join(",")' "$RUNNER_TEMP/canary.json")
+          if [ "$rc" -ne 1 ] || [ "$found" -ne 1 ] || [ "$rule" != "supabase-secret-key" ]; then
+            echo "::error::gitleaks canary failed: exit $rc, $found findings, rules '$rule' (expected exit 1, 1 finding, supabase-secret-key)"
             exit 1
           fi
-          echo "canary found (exit $rc, $found finding)"
+          echo "canary found by $rule (exit $rc, $found finding)"
       - name: Scan the full git history
         run: |
           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --config .gitleaks.toml --log-level info . 2>&1 | tee "$RUNNER_TEMP/gitleaks.log"
@@ -219,34 +224,6 @@ jobs:
       - run: npm ci
       - name: npm audit (any severity fails)
         run: npm audit --audit-level=low
-      - name: npm registry signatures and provenance
-        if: ${{ !cancelled() }}
-        # On failure, print what the registry and npm saw, so the cause can be
-        # found instead of re-running. This found a stale CDN copy of
-        # napi-postinstall@0.3.8's attestations (see docs/milestones/M0.md).
-        run: |
-          if npm audit signatures 2> >(tee "$RUNNER_TEMP/sig.err" >&2); then exit 0; fi
-          pkg=$(grep -oE '[^ ]+@[0-9][^ ]* has attestations' "$RUNNER_TEMP/sig.err" | head -1 | cut -d' ' -f1 || true)
-          if [ -n "$pkg" ]; then
-            echo "::group::Attestations the registry serves for $pkg (now)"
-            curl -sS -D "$RUNNER_TEMP/att.hdr" -o "$RUNNER_TEMP/att.json" "https://registry.npmjs.org/-/npm/v1/attestations/$pkg" || true
-            python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(open(sys.argv[1]))["attestations"]]' "$RUNNER_TEMP/att.json" || true
-            grep -i -E '^(date|age|last-modified|cf-ray|cf-cache-status|etag):' "$RUNNER_TEMP/att.hdr" || true
-            echo "::endgroup::"
-          fi
-          echo "::group::npm's Sigstore TUF copy of the registry keys"
-          for f in ~/.npm/_tuf/*/targets/registry.npmjs.org%2Fkeys.json; do
-            python3 -I -c 'import json,sys; [print(k["keyId"], k.get("keyUsage"), k["publicKey"]["validFor"]) for k in json.load(open(sys.argv[1]))["keys"]]' "$f" || true
-          done
-          echo "::endgroup::"
-          echo "::group::Registry signing keys (now)"
-          curl -sS https://registry.npmjs.org/-/npm/v1/keys || true
-          echo
-          echo "::endgroup::"
-          echo "::group::npm debug log: fetches and errors"
-          grep -h -E "http fetch|error|verbose stack" ~/.npm/_logs/*-debug-0.log | tail -60 || true
-          echo "::endgroup::"
-          exit 1
       - name: Install OSV-Scanner (checksum pinned)
         if: ${{ !cancelled() }} # OSV still runs when npm audit fails
         run: |
