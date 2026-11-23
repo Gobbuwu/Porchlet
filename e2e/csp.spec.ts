@@ -34,7 +34,7 @@ test("every page gets a strict CSP with a fresh nonce on all its scripts", async
     expect(csp, `${path}: no unsafe-inline or unsafe-eval in production`).not.toMatch(/unsafe-(inline|eval)/);
 
     const html = await first.text();
-    const scripts = html.match(/<script\b[^>]*>/g) ?? [];
+    const scripts = html.match(/<script\b[^>]*>/gi) ?? [];
     expect(scripts.length, `${path}: scripts`).toBeGreaterThan(0);
     for (const tag of scripts) expect(tag, `${path}: script without the nonce`).toContain(`nonce="${nonce}"`);
   }
