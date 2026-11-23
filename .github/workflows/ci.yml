@@ -128,11 +128,16 @@ jobs:
   e2e:
     name: E2E (${{ matrix.browser }})
     runs-on: ubuntu-24.04
-    # 30, not 15: on run 45214507704 the Ubuntu apt mirror was slow enough
-    # that `playwright install --with-deps webkit` alone used all 15 minutes.
-    timeout-minutes: 30
+    # Back to 15 minutes: the browsers and their system libraries now come from the pinned
+    # Playwright image instead of the Ubuntu apt mirror, which once used all 15 (run 45214507704).
+    timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      # Official Playwright image for @playwright/test 1.65.1 (Ubuntu 24.04, Node 26), pinned by
+      # its multi-arch index digest. Bump it together with @playwright/test (ADR 0012);
+      # scripts/ci/in-playwright-image.sh fails if the two versions differ.
+      PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
     strategy:
       fail-fast: false
       matrix:
@@ -146,11 +151,16 @@ jobs:
           node-version: 22
           package-manager-cache: false
       - run: npm ci
-      - name: Install ${{ matrix.browser }}
-        run: npx playwright install --with-deps ${{ matrix.browser }}
-      - run: npm run build
+      - name: Pull the Playwright image
+        run: docker pull "$PLAYWRIGHT_IMAGE"
+      - name: Record versions
+        run: |
+          scripts/ci/in-playwright-image.sh sh -c 'echo "Playwright image: $0"; echo "Node in image: $(node --version)"; ls /ms-playwright' "$PLAYWRIGHT_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Built and served inside the image too, so the app under test runs on one Node (the image's).
+      - name: Build (in the Playwright image)
+        run: scripts/ci/in-playwright-image.sh npm run build
       - name: Playwright
-        run: npx playwright test --project=${{ matrix.browser }}
+        run: scripts/ci/in-playwright-image.sh npx playwright test --project=${{ matrix.browser }}
 
   secrets:
     name: Secret scan
