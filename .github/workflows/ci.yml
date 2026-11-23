@@ -175,17 +175,22 @@ jobs:
           "$RUNNER_TEMP/gitleaks" version
       - name: Canary (gitleaks must find a planted key)
         run: |
+          # A fake key in Supabase's documented format,
+          # sb_secret_<22 random>_<8 checksum> (supabase.com/docs/guides/self-hosting/self-hosted-auth-keys),
+          # alone on a line so only our supabase-secret-key rule can match it.
           dir=$(mktemp -d)
-          printf 'SUPABASE_SECRET_KEY=sb_secret_%s\n' "$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" > "$dir/canary.env"
+          rand() { local x; x=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9'); printf '%s' "${x:0:$1}"; }
+          printf 'sb_secret_%s_%s\n' "$(rand 22)" "$(rand 8)" > "$dir/canary.txt"
           rc=0
           "$RUNNER_TEMP/gitleaks" dir --no-banner --redact --config .gitleaks.toml \
             --report-format json --report-path "$RUNNER_TEMP/canary.json" "$dir" || rc=$?
           found=$(jq length "$RUNNER_TEMP/canary.json")
-          if [ "$rc" -ne 1 ] || [ "$found" -ne 1 ]; then
-            echo "::error::gitleaks canary failed: exit $rc, $found findings (expected exit 1, 1 finding)"
+          rule=$(jq -r '[.[].RuleID] | join(",")' "$RUNNER_TEMP/canary.json")
+          if [ "$rc" -ne 1 ] || [ "$found" -ne 1 ] || [ "$rule" != "supabase-secret-key" ]; then
+            echo "::error::gitleaks canary failed: exit $rc, $found findings, rules '$rule' (expected exit 1, 1 finding, supabase-secret-key)"
             exit 1
           fi
-          echo "canary found (exit $rc, $found finding)"
+          echo "canary found by $rule (exit $rc, $found finding)"
       - name: Scan the full git history
         run: |
           "$RUNNER_TEMP/gitleaks" git --no-banner --redact --config .gitleaks.toml --log-level info . 2>&1 | tee "$RUNNER_TEMP/gitleaks.log"
