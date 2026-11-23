@@ -25,7 +25,6 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: [
       "accelerometer=()",
-      "browsing-topics=()",
       "camera=()",
       "display-capture=()",
       "geolocation=()",

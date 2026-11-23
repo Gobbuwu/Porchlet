@@ -11,7 +11,7 @@ const expected: Record<string, string> = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "same-origin",
   "permissions-policy":
-    "accelerometer=(), browsing-topics=(), camera=(), display-capture=(), " +
+    "accelerometer=(), camera=(), display-capture=(), " +
     "geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), midi=(), " +
     "payment=(), serial=(), usb=(), xr-spatial-tracking=()",
 };

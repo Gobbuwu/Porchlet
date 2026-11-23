@@ -27,7 +27,7 @@ Next.js sets headers for every path with `headers()` in `next.config.ts` (`node_
 | X-Frame-Options | `DENY` | Same as OWASP. Kept for browsers without frame-ancestors; ASVS says not to rely on it alone. |
 | X-Content-Type-Options | `nosniff` | ASVS 3.4.4, same as OWASP. |
 | Referrer-Policy | `same-origin` | ASVS 3.4.5. OWASP lists `no-referrer`; see below for why not. |
-| Permissions-Policy | 14 powerful features set to `()` (camera, microphone, geolocation, payment, USB and so on) | Porchlet uses none of them. Unlike the OWASP list, `clipboard-write` is left on for the "Copy invite link" button, and features Chromium doesn't recognise are left out (see below). |
+| Permissions-Policy | 13 powerful features set to `()` (camera, microphone, geolocation, payment, USB and so on) | Porchlet uses none of them. Unlike the OWASP list, `clipboard-write` is left on for the "Copy invite link" button, and features Chromium doesn't recognise are left out (see below). |
 
 `poweredByHeader: false` also drops `X-Powered-By: Next.js` (ASVS 13.4.6 is L3, but this is free to do).
 
@@ -37,7 +37,7 @@ Under `no-referrer`, the Fetch standard ([append a request Origin header](https:
 
 ### Permissions-Policy feature list
 
-Chromium logs `Unrecognized feature` for names it doesn't know. The first draft had `bluetooth=()`, and Chromium 1243 logged `Error with Permissions-Policy header: Unrecognized feature: 'bluetooth'.`, so it was removed. The E2E test fails on any such message. Firefox and Safari don't support this header ([MDN browser-compat-data](https://github.com/mdn/browser-compat-data/blob/2f696a2565efa5303ffd9e6a13365a0ef1a4f114/http/headers/Permissions-Policy.json): `version_added: false` for both), so it protects Chromium users only.
+Chromium logs `Unrecognized feature` for names it doesn't know. The first draft had `bluetooth=()`, and Chromium 1243 logged `Error with Permissions-Policy header: Unrecognized feature: 'bluetooth'.`, so it was removed. `browsing-topics=()` passed locally but CI's Chromium (the build Playwright downloads) logged `Unrecognized feature: 'browsing-topics'` ([run 45252085307](https://github.com/Gobbuwu/porchlet/actions/runs/45252085307/job/137964111674)): which names are known depends on the Chromium build, so the list keeps only features both builds accept. The E2E test fails on any such message. Firefox and Safari don't support this header ([MDN browser-compat-data](https://github.com/mdn/browser-compat-data/blob/2f696a2565efa5303ffd9e6a13365a0ef1a4f114/http/headers/Permissions-Policy.json): `version_added: false` for both), so it protects Chromium users only.
 
 ### Not added here
 
