@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { confirmLink } from "./mail";
 
@@ -64,4 +65,15 @@ export async function expireSession(context: BrowserContext): Promise<Session> {
   await context.clearCookies();
   await context.addCookies([{ ...cookies[0], name: "porchlet-auth", value }]);
   return session;
+}
+
+// The app's Supabase settings, from the .env.local that scripts/e2e/write-env.sh writes.
+export function supabaseEnv(): { url: string; key: string } {
+  const env = Object.fromEntries(
+    readFileSync(".env.local", "utf8")
+      .split("\n")
+      .filter((l) => l.includes("="))
+      .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1).trim()]),
+  );
+  return { url: env.NEXT_PUBLIC_SUPABASE_URL, key: env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY };
 }

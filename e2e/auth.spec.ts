@@ -9,6 +9,7 @@ import {
   readSession,
   signUp,
   signUpAndConfirm,
+  supabaseEnv,
 } from "./support/users";
 
 // The M1 auth loop against the local Supabase stack and its mail catcher (design doc section 8).
@@ -34,6 +35,19 @@ test("sign-up needs the emailed confirmation, then login and logout work", async
   await page.getByRole("button", { name: "Confirm email" }).click();
   await expect(page).toHaveURL(/\/w$/);
   await expect(page.getByText(`Signed in as ${user.email}.`)).toBeVisible();
+
+  // Sign-up through Supabase Auth created the user's profile (PR 9's trigger), and the user's
+  // own token reads exactly that row through the API.
+  const { url, key } = supabaseEnv();
+  const { access_token: token, user: authUser } = (await readSession(context)) as unknown as {
+    access_token: string;
+    user: { id: string };
+  };
+  const profiles = await fetch(`${url}/rest/v1/profiles?select=id,display_name`, {
+    headers: { apikey: key, authorization: `Bearer ${token}` },
+  });
+  expect(profiles.status).toBe(200);
+  expect(await profiles.json()).toEqual([{ id: authUser.id, display_name: "" }]);
 
   // Session cookies are out of reach of page scripts (ADR 0014).
   const authCookies = (await context.cookies()).filter((c) => isAuthCookie(c.name));
