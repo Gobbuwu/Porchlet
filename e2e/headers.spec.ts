@@ -27,7 +27,7 @@ async function expectSecurityHeaders(response: Response | null, what: string) {
   const csp = headers["content-security-policy"] ?? "";
   expect(csp.match(/frame-ancestors/g)?.length, `${what}: one CSP with frame-ancestors`).toBe(1);
   expect(csp, `${what}: frame-ancestors`).toContain("frame-ancestors 'none'");
-  const proxySkipped = /\/_next\/static\/|\/_next\/image|\/favicon\.ico$/.test(response!.url());
+  const proxySkipped = /^\/(?:_next\/static\/.+|_next\/image|favicon\.ico)$/.test(new URL(response!.url()).pathname);
   if (proxySkipped) {
     expect(csp, `${what}: frame-only CSP`).toBe("frame-ancestors 'none'");
   } else {
