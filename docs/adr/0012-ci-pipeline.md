@@ -19,7 +19,7 @@ One workflow, `.github/workflows/ci.yml`, on `pull_request` to `main` and `push`
 | Build (Node 22), (Node 24), (Node 26) | `next build`, then `scripts/ci/check-client-bundle.sh` | Build error; `sb_secret_` in `.next/static`; no browser JS found |
 | Database tests | `supabase db start`, `supabase db lint`, `supabase test db`, `scripts/ci/db-count-check.sh` | SQL function errors, any pgTAP failure, count mismatch, a table with no `-- Covers:` test |
 | E2E (chromium), (firefox), (webkit) | Playwright against `next start` | Any failed test |
-| Secret scan | gitleaks canary, then gitleaks on the full history, then a commit-count cross-check | Canary missed; any finding; scanned commits differing from git's non-merge count |
+| Secret scan | gitleaks canary, then gitleaks on the full history, then a commit-count cross-check | Canary missed; any finding; scanned commits differing from git's count of non-merge commits that add lines |
 | Dependency scan | `npm audit --audit-level=low`, `npm audit signatures`, OSV-Scanner with a package-count cross-check | Any advisory; a bad signature; OSV scanning a different number of packages than the lockfile holds |
 | SAST (CodeQL, javascript-typescript), (CodeQL, actions) | CodeQL `security-extended`, results uploaded to code scanning | The job fails only on errors; findings fail the separate **CodeQL** check that code scanning adds |
 | SAST (Semgrep) | `semgrep scan --config p/default --config p/typescript --error` | Any finding |
