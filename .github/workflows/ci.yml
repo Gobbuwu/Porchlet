@@ -226,7 +226,20 @@ jobs:
         # earlier. On failure, print what the registry and npm saw, so the
         # cause can be found instead of re-running.
         run: |
-          if npm audit signatures; then exit 0; fi
+          if npm audit signatures 2> >(tee "$RUNNER_TEMP/sig.err" >&2); then exit 0; fi
+          pkg=$(grep -oE '[^ ]+@[0-9][^ ]* has attestations' "$RUNNER_TEMP/sig.err" | head -1 | cut -d' ' -f1 || true)
+          if [ -n "$pkg" ]; then
+            echo "::group::Attestations the registry serves for $pkg (now)"
+            curl -sS -D "$RUNNER_TEMP/att.hdr" "https://registry.npmjs.org/-/npm/v1/attestations/$pkg" |
+              python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(sys.stdin)["attestations"]]' || true
+            grep -i -E '^(date|age|last-modified|cf-ray|cf-cache-status|etag):' "$RUNNER_TEMP/att.hdr" || true
+            echo "::endgroup::"
+          fi
+          echo "::group::npm's Sigstore TUF copy of the registry keys"
+          for f in ~/.npm/_tuf/*/targets/registry.npmjs.org%2Fkeys.json; do
+            python3 -I -c 'import json,sys; [print(k["keyId"], k.get("keyUsage"), k["publicKey"]["validFor"]) for k in json.load(open(sys.argv[1]))["keys"]]' "$f" || true
+          done
+          echo "::endgroup::"
           echo "::group::Registry signing keys (now)"
           curl -sS https://registry.npmjs.org/-/npm/v1/keys || true
           echo
