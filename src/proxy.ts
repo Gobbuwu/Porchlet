@@ -1,0 +1,78 @@
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+import { contentSecurityPolicy, newNonce } from "@/lib/csp";
+import { isHttps } from "@/lib/http";
+import { authCookieOptions, hardenCookie, isAuthCookie, supabaseEnv } from "@/lib/supabase/config";
+
+// Runs before every page and route (design doc section 2, ADR 0014):
+// 1. A Content-Security-Policy with a fresh nonce.
+// 2. Refreshes the Supabase session cookie when the access token has expired.
+// 3. Sends signed-out visitors from protected pages to /login, and signed-in ones away from
+//    /login and /signup. This is for convenience only: RLS is what protects data (ADR 0004).
+
+const PROTECTED = ["/w", "/settings"];
+const SIGNED_OUT_ONLY = ["/login", "/signup"];
+
+const under = (path: string, prefixes: string[]) =>
+  prefixes.some((p) => path === p || path.startsWith(`${p}/`));
+
+export async function proxy(request: NextRequest) {
+  const path = request.nextUrl.pathname;
+  const https = isHttps(request.headers);
+  const nonce = newNonce();
+  const csp = contentSecurityPolicy(nonce, { dev: process.env.NODE_ENV === "development", https });
+
+  // Cookies and cache headers the Supabase client asks us to set (token refresh or sign-out).
+  let pendingCookies: { name: string; value: string; options: CookieOptions }[] = [];
+  let pendingHeaders: Record<string, string> = {};
+  let signedIn = false;
+
+  // Visitors without a session cookie have no session to refresh, so they cost no auth call.
+  const hasSession = request.cookies.getAll().some((c) => isAuthCookie(c.name));
+  if (hasSession || under(path, PROTECTED)) {
+    const { url, key } = supabaseEnv();
+    const supabase = createServerClient(url, key, {
+      cookieOptions: authCookieOptions(https),
+      cookies: {
+        getAll: () => request.cookies.getAll(),
+        setAll(cookiesToSet, headers) {
+          // Update the request too, so this render sees the refreshed session.
+          for (const { name, value } of cookiesToSet) request.cookies.set(name, value);
+          pendingCookies = cookiesToSet;
+          pendingHeaders = headers;
+        },
+      },
+    });
+    // getClaims() checks the JWT signature (against Supabase Auth's keys), unlike getSession().
+    const { data } = await supabase.auth.getClaims();
+    signedIn = !!data?.claims?.sub;
+  }
+
+  let response: NextResponse;
+  if (!signedIn && under(path, PROTECTED)) {
+    const login = new URL("/login", request.url);
+    login.searchParams.set("next", path + request.nextUrl.search);
+    response = NextResponse.redirect(login);
+  } else if (signedIn && under(path, SIGNED_OUT_ONLY)) {
+    response = NextResponse.redirect(new URL("/w", request.url));
+  } else {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("content-security-policy", csp);
+    response = NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
+  response.headers.set("content-security-policy", csp);
+  for (const { name, value, options } of pendingCookies) {
+    response.cookies.set(name, value, hardenCookie(options, https));
+  }
+  for (const [name, value] of Object.entries(pendingHeaders)) response.headers.set(name, value);
+  return response;
+}
+
+export const config = {
+  matcher: [
+    // Everything except build assets and the favicon (Next.js CSP guide). Link prefetches are
+    // included: they can carry a refreshed cookie.
+    "/((?!_next/static|_next/image|favicon.ico).*)",
+  ],
+};

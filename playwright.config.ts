@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// E2E runs against the production build (`next start`). From M1 on it also needs the local
-// Supabase stack. PW_CHROMIUM_PATH lets a machine with a preinstalled Chromium use it instead
+// E2E runs against the production build (`next start`) and the local Supabase stack
+// (`npx supabase start`, then scripts/e2e/write-env.sh for .env.local). PW_CHROMIUM_PATH lets a machine with a preinstalled Chromium use it instead
 // of Playwright's download; CI leaves it unset.
 const chromiumPath = process.env.PW_CHROMIUM_PATH;
 

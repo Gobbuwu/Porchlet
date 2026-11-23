@@ -148,9 +148,22 @@ jobs:
       - run: npm ci
       - name: Install ${{ matrix.browser }}
         run: npx playwright install --with-deps ${{ matrix.browser }}
+      # Auth E2E runs against a local Supabase stack and its mail catcher (Mailpit). Services
+      # the app doesn't use yet are left out to save time; storage joins in M3.
+      - name: Start local Supabase (auth, REST, Mailpit)
+        run: npx supabase start -x realtime,storage-api,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+      - name: Record versions
+        run: |
+          npx supabase --version
+          docker ps --format '{{.Image}}' | sort | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Point the app at local Supabase
+        run: scripts/e2e/write-env.sh
       - run: npm run build
       - name: Playwright
         run: npx playwright test --project=${{ matrix.browser }}
+      - name: Auth container log (on failure)
+        if: failure()
+        run: docker logs supabase_auth_porchlet 2>&1 | tail -n 200
 
   secrets:
     name: Secret scan
