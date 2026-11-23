@@ -50,7 +50,8 @@ jobs:
           if [ -n "$pkg" ]; then
             echo "::group::Attestations the registry serves for $pkg (now)"
             curl -sS -D "$RUNNER_TEMP/att.hdr" -o "$RUNNER_TEMP/att.json" "https://registry.npmjs.org/-/npm/v1/attestations/$pkg" || true
-            python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(open(sys.argv[1]))["attestations"]]' "$RUNNER_TEMP/att.json" || true
+            python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(open(sys.argv[1]))["attestations"]]' "$RUNNER_TEMP/att.json" 2>/dev/null ||
+              { echo "Not attestation JSON. First 200 bytes:"; head -c 200 "$RUNNER_TEMP/att.json" | cat -v; echo; }
             grep -i -E '^(date|age|last-modified|cf-ray|cf-cache-status|etag):' "$RUNNER_TEMP/att.hdr" || true
             echo "::endgroup::"
           fi
