@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("home page renders", async ({ page }) => {
   const response = await page.goto("/");
   expect(response?.status()).toBe(200);
-  await expect(page.getByRole("heading", { level: 1, name: "Porchlet" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Porchlet", exact: true })).toBeVisible();
 });
 
 test("health route returns ok and nothing else", async ({ request }) => {

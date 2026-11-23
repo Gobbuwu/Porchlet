@@ -119,6 +119,7 @@ jobs:
       - name: Lint SQL functions (plpgsql_check)
         run: npx supabase db lint --schema public,private --level warning --fail-on warning
       - name: pgTAP
+        if: ${{ !cancelled() }} # still runs when the SQL lint fails
         run: npx supabase test db 2>&1 | tee pgtap.log
       - name: Count cross-check
         if: ${{ !cancelled() }}
@@ -215,8 +216,10 @@ jobs:
       - name: npm audit (any severity fails)
         run: npm audit --audit-level=low
       - name: npm registry signatures and provenance
+        if: ${{ !cancelled() }}
         run: npm audit signatures
       - name: Install OSV-Scanner (checksum pinned)
+        if: ${{ !cancelled() }} # OSV still runs when npm audit fails
         run: |
           curl -sSfL -o "$RUNNER_TEMP/osv-scanner" \
             "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
@@ -224,6 +227,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/osv-scanner"
           "$RUNNER_TEMP/osv-scanner" --version
       - name: OSV-Scanner
+        if: ${{ !cancelled() }}
         run: |
           rc=0
           "$RUNNER_TEMP/osv-scanner" scan source --format=json -L package-lock.json \
