@@ -1,0 +1,70 @@
+# npm registry signatures and provenance (npm audit signatures). Not a required check:
+# npm's CDN has served stale or broken attestation data from some edges (docs/milestones/M0.md),
+# which would block merges for reasons outside this repo. npm ci still checks every tarball
+# against the lockfile's sha512, and npm audit and OSV-Scanner stay required in CI.
+# Runs on every PR, on main, and daily, so a real signature problem stays visible.
+name: Registry signatures
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 * * *"
+
+permissions: {}
+
+concurrency:
+  group: signatures-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash # Actions runs explicit bash with -eo pipefail
+
+jobs:
+  signatures:
+    name: Registry signatures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci
+      - name: npm registry signatures and provenance
+        # On failure, print what the registry and npm saw, so the cause can be
+        # found instead of re-running (see docs/milestones/M0.md).
+        run: |
+          if npm audit signatures 2> >(tee "$RUNNER_TEMP/sig.err" >&2); then exit 0; fi
+          # The failing package: "<pkg> has attestations ..." or ".../attestations/<pkg> reason: ..."
+          pkg=$( { grep -oE '[^ ]+@[0-9][^ ]* has attestations' "$RUNNER_TEMP/sig.err" | cut -d' ' -f1
+                   grep -oE 'v1/attestations/[^ ]+' "$RUNNER_TEMP/sig.err" | cut -d/ -f3-; } | head -1 || true)
+          if [ -n "$pkg" ]; then
+            echo "::group::Attestations the registry serves for $pkg (now)"
+            curl -sS -D "$RUNNER_TEMP/att.hdr" -o "$RUNNER_TEMP/att.json" "https://registry.npmjs.org/-/npm/v1/attestations/$pkg" || true
+            python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(open(sys.argv[1]))["attestations"]]' "$RUNNER_TEMP/att.json" 2>/dev/null ||
+              { echo "Not attestation JSON. First 200 bytes:"; head -c 200 "$RUNNER_TEMP/att.json" | cat -v; echo; }
+            grep -i -E '^(date|age|last-modified|cf-ray|cf-cache-status|etag):' "$RUNNER_TEMP/att.hdr" || true
+            echo "::endgroup::"
+          fi
+          echo "::group::npm's Sigstore TUF copy of the registry keys"
+          for f in ~/.npm/_tuf/*/targets/registry.npmjs.org%2Fkeys.json; do
+            python3 -I -c 'import json,sys; [print(k["keyId"], k.get("keyUsage"), k["publicKey"]["validFor"]) for k in json.load(open(sys.argv[1]))["keys"]]' "$f" || true
+          done
+          echo "::endgroup::"
+          echo "::group::Registry signing keys (now)"
+          curl -sS https://registry.npmjs.org/-/npm/v1/keys || true
+          echo
+          echo "::endgroup::"
+          echo "::group::npm debug log: fetches and errors"
+          grep -h -E "http fetch|error|verbose stack" ~/.npm/_logs/*-debug-0.log | tail -60 || true
+          echo "::endgroup::"
+          exit 1

@@ -20,7 +20,8 @@ One workflow, `.github/workflows/ci.yml`, on `pull_request` to `main` and `push`
 | Database tests | `supabase db start`, `supabase db lint`, `supabase test db`, `scripts/ci/db-count-check.sh` | SQL function errors, any pgTAP failure, count mismatch, a table with no `-- Covers:` test |
 | E2E (chromium), (firefox), (webkit) | Playwright against `next start` | Any failed test |
 | Secret scan | gitleaks canary, then gitleaks on the full history, then a commit-count cross-check | Canary missed; any finding; scanned commits differing from git's count of non-merge commits that add lines |
-| Dependency scan | `npm audit --audit-level=low`, `npm audit signatures`, OSV-Scanner with a package-count cross-check | Any advisory; a bad signature; OSV scanning a different number of packages than the lockfile holds |
+| Dependency scan | `npm audit --audit-level=low`, OSV-Scanner with a package-count cross-check | Any advisory; OSV scanning a different number of packages than the lockfile holds |
+| Registry signatures (own workflow, `signatures.yml`, **not required**) | `npm audit signatures` on every PR, on `main` and daily | A missing or bad registry signature or attestation. Not required because npm's CDN served stale or broken attestation data from some edges (M0.md); `npm ci` still checks every tarball against the lockfile's sha512 |
 | SAST (CodeQL, javascript-typescript), (CodeQL, actions) | CodeQL `security-extended`, results uploaded to code scanning | The job fails only on errors; findings fail the separate **CodeQL** check that code scanning adds |
 | SAST (Semgrep) | `semgrep scan --config p/default --config p/typescript --error` | Any finding |
 
