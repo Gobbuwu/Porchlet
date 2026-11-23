@@ -224,34 +224,6 @@ jobs:
       - run: npm ci
       - name: npm audit (any severity fails)
         run: npm audit --audit-level=low
-      - name: npm registry signatures and provenance
-        if: ${{ !cancelled() }}
-        # On failure, print what the registry and npm saw, so the cause can be
-        # found instead of re-running. This found a stale CDN copy of
-        # napi-postinstall@0.3.8's attestations (see docs/milestones/M0.md).
-        run: |
-          if npm audit signatures 2> >(tee "$RUNNER_TEMP/sig.err" >&2); then exit 0; fi
-          pkg=$(grep -oE '[^ ]+@[0-9][^ ]* has attestations' "$RUNNER_TEMP/sig.err" | head -1 | cut -d' ' -f1 || true)
-          if [ -n "$pkg" ]; then
-            echo "::group::Attestations the registry serves for $pkg (now)"
-            curl -sS -D "$RUNNER_TEMP/att.hdr" -o "$RUNNER_TEMP/att.json" "https://registry.npmjs.org/-/npm/v1/attestations/$pkg" || true
-            python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(open(sys.argv[1]))["attestations"]]' "$RUNNER_TEMP/att.json" || true
-            grep -i -E '^(date|age|last-modified|cf-ray|cf-cache-status|etag):' "$RUNNER_TEMP/att.hdr" || true
-            echo "::endgroup::"
-          fi
-          echo "::group::npm's Sigstore TUF copy of the registry keys"
-          for f in ~/.npm/_tuf/*/targets/registry.npmjs.org%2Fkeys.json; do
-            python3 -I -c 'import json,sys; [print(k["keyId"], k.get("keyUsage"), k["publicKey"]["validFor"]) for k in json.load(open(sys.argv[1]))["keys"]]' "$f" || true
-          done
-          echo "::endgroup::"
-          echo "::group::Registry signing keys (now)"
-          curl -sS https://registry.npmjs.org/-/npm/v1/keys || true
-          echo
-          echo "::endgroup::"
-          echo "::group::npm debug log: fetches and errors"
-          grep -h -E "http fetch|error|verbose stack" ~/.npm/_logs/*-debug-0.log | tail -60 || true
-          echo "::endgroup::"
-          exit 1
       - name: Install OSV-Scanner (checksum pinned)
         if: ${{ !cancelled() }} # OSV still runs when npm audit fails
         run: |
