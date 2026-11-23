@@ -46,6 +46,6 @@ Chromium logs `Unrecognized feature` for names it doesn't know. The first draft 
 
 ## Consequences
 
-- `e2e/headers.spec.ts` checks each value on a page, a build script, a route handler, `favicon.ico` and a 404, in Chromium, Firefox and WebKit. It also checks that browsers refuse to frame the app from another origin, that same-origin POSTs keep a real Origin, and (Chromium only) that every Permissions-Policy feature is recognised and applied.
+- `e2e/headers.spec.ts` checks each value on a page, a build script, a route handler, `favicon.ico` and a 404, in Chromium, Firefox and WebKit. It also checks that browsers refuse to show the app in a frame (the parent is the app itself, since `frame-ancestors 'none'` blocks same-origin parents too), that same-origin POSTs keep a real Origin, and (Chromium only) that every Permissions-Policy feature is recognised and applied.
 - Planted failures, Chromium 1243, local: removing both frame headers made the frame test find the app's heading inside the frame (expected 0, got 1); switching to `no-referrer` failed the Origin test (form POST got `"null"`).
 - HSTS has no effect over plain HTTP (local `next start`); it takes effect on the HTTPS deployment. Whether Vercel adds its own HSTS header next to ours is unverified until the preview is checked.

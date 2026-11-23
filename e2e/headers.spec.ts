@@ -1,5 +1,3 @@
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { expect, test, type Page, type Response } from "@playwright/test";
 
 // Security headers from next.config.ts (reasons in docs/adr/0013-security-headers.md).
@@ -49,28 +47,30 @@ test("every kind of response carries the security headers", async ({ page }) => 
   await gotoAndCheck(page, "/no-such-page", 404); // not found
 });
 
-test("the browser refuses to show the app inside a frame on another origin", async ({ page }) => {
+test("the browser refuses to show the app inside a frame", async ({ page }) => {
+  // frame-ancestors 'none' blocks every parent, even a same-origin one, so the app's own page
+  // can be the parent. That lets the check read the frame's document from the page itself,
+  // which works the same in every engine (Playwright can't query a blocked frame in Firefox).
+  await page.goto("/");
   const app = new URL("/", test.info().project.use.baseURL).href;
-  // A page on another origin (same host, another port) that frames the app. It is a real local
-  // server rather than page.route(), because Chromium blocks a page it can't place on the local
-  // network from framing 127.0.0.1 before frame-ancestors is ever checked.
-  const framer = createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "text/html" });
-    res.end(`<iframe src="${app}" onload="window.framed = true"></iframe>`);
+  const frameDocument = page.waitForResponse((r) => r.url() === app && r.frame() !== page.mainFrame());
+  const heading = await page.evaluate(async () => {
+    const iframe = document.createElement("iframe");
+    iframe.src = "/";
+    const loaded = new Promise((resolve) => iframe.addEventListener("load", resolve, { once: true }));
+    document.body.append(iframe);
+    await loaded;
+    let doc: Document | null = null;
+    try {
+      doc = iframe.contentDocument;
+    } catch {
+      // A blocked frame can hold an error page the parent may not touch.
+    }
+    return doc?.querySelector("h1")?.textContent ?? null;
   });
-  await new Promise<void>((resolve) => framer.listen(0, "127.0.0.1", resolve));
-  try {
-    const { port } = framer.address() as AddressInfo;
-    const frameDocument = page.waitForResponse(app);
-    await page.goto(`http://127.0.0.1:${port}/`);
-    await expectSecurityHeaders(await frameDocument, "framed /");
-    await page.waitForFunction(() => (window as { framed?: boolean }).framed === true);
-    const frame = page.frames().find((f) => f !== page.mainFrame());
-    // A blocked frame shows the browser's error page, so the app's heading is not there.
-    await expect(frame!.getByRole("heading", { name: "Porchlet", exact: true })).toHaveCount(0);
-  } finally {
-    await new Promise((resolve) => framer.close(resolve));
-  }
+  await expectSecurityHeaders(await frameDocument, "framed /");
+  // Allowed, the frame would hold the app and its "Porchlet" heading.
+  expect(heading, "heading inside the frame").not.toBe("Porchlet");
 });
 
 test("same-origin POSTs still send the real Origin header", async ({ page }) => {
