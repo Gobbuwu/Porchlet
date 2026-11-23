@@ -230,8 +230,8 @@ jobs:
           pkg=$(grep -oE '[^ ]+@[0-9][^ ]* has attestations' "$RUNNER_TEMP/sig.err" | head -1 | cut -d' ' -f1 || true)
           if [ -n "$pkg" ]; then
             echo "::group::Attestations the registry serves for $pkg (now)"
-            curl -sS -D "$RUNNER_TEMP/att.hdr" "https://registry.npmjs.org/-/npm/v1/attestations/$pkg" |
-              python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(sys.stdin)["attestations"]]' || true
+            curl -sS -D "$RUNNER_TEMP/att.hdr" -o "$RUNNER_TEMP/att.json" "https://registry.npmjs.org/-/npm/v1/attestations/$pkg" || true
+            python3 -I -c 'import json,sys; [print(a["predicateType"], [s.get("keyid") for s in a["bundle"]["dsseEnvelope"]["signatures"]]) for a in json.load(open(sys.argv[1]))["attestations"]]' "$RUNNER_TEMP/att.json" || true
             grep -i -E '^(date|age|last-modified|cf-ray|cf-cache-status|etag):' "$RUNNER_TEMP/att.hdr" || true
             echo "::endgroup::"
           fi
