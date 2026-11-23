@@ -1,0 +1,18 @@
+# Dependency update PRs. Security updates are on in the repo settings and ignore the cooldown.
+# The 7-day cooldown matches the rule in docs/milestones/M0.md: take a release only once it is
+# at least 7 days old, so a just-published compromised release is less likely to land.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

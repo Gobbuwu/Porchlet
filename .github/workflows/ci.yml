@@ -1,0 +1,252 @@
+# CI for every PR to main and every push to main. Design doc section 7, ADR 0012.
+# Lockdown (PW.6.1, PO.5.2): no permissions by default, each job asks only for what it needs,
+# third-party code is pinned by commit SHA, image digest or file checksum, checkouts don't keep
+# the token, and no cloud secrets are used.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash # Actions runs explicit bash with -eo pipefail
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  dco:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Self-test the DCO script
+        run: scripts/ci/test-check-dco.sh
+      - name: Check every commit in the PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          COMMITS: ${{ github.event.pull_request.commits }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          if [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            export DCO_EXEMPT_EMAIL="49699333+dependabot[bot]@users.noreply.github.com"
+          fi
+          scripts/ci/check-dco.sh "$BASE_SHA" "$HEAD_SHA" "$COMMITS"
+
+  build:
+    name: Lint, types and build (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26] # what Vercel and Netlify offer (docs/milestones/M0.md)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: node --version && npm --version
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - name: No secret key in the browser bundle
+        run: scripts/ci/check-client-bundle.sh .next/static
+
+  db:
+    name: Database tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci
+      - name: Start the local database and apply migrations
+        run: npx supabase db start
+      - name: Record versions
+        run: |
+          npx supabase --version
+          psql postgresql://postgres:postgres@127.0.0.1:54322/postgres -XtAc 'select version()' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Lint SQL functions (plpgsql_check)
+        run: npx supabase db lint --schema public,private --level warning --fail-on warning
+      - name: pgTAP
+        run: npx supabase test db 2>&1 | tee pgtap.log
+      - name: Count cross-check
+        if: ${{ !cancelled() }}
+        run: scripts/ci/db-count-check.sh pgtap.log
+
+  e2e:
+    name: E2E (${{ matrix.browser }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci
+      - name: Install ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run build
+      - name: Playwright
+        run: npx playwright test --project=${{ matrix.browser }}
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (checksum pinned)
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+      - name: Canary (gitleaks must find a planted key)
+        run: |
+          dir=$(mktemp -d)
+          printf 'SUPABASE_SECRET_KEY=sb_secret_%s\n' "$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9')" > "$dir/canary.env"
+          rc=0
+          "$RUNNER_TEMP/gitleaks" dir --no-banner --redact --config .gitleaks.toml \
+            --report-format json --report-path "$RUNNER_TEMP/canary.json" "$dir" || rc=$?
+          found=$(jq length "$RUNNER_TEMP/canary.json")
+          if [ "$rc" -ne 1 ] || [ "$found" -ne 1 ]; then
+            echo "::error::gitleaks canary failed: exit $rc, $found findings (expected exit 1, 1 finding)"
+            exit 1
+          fi
+          echo "canary found (exit $rc, $found finding)"
+      - name: Scan the full git history
+        run: |
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --config .gitleaks.toml --log-level info . 2>&1 | tee "$RUNNER_TEMP/gitleaks.log"
+      - name: Cross-check commits scanned
+        run: |
+          scanned=$(grep -oE '[0-9]+ commits scanned' "$RUNNER_TEMP/gitleaks.log" | grep -oE '^[0-9]+')
+          all=$(git rev-list --count --all)
+          echo "gitleaks scanned $scanned commits; git rev-list --all has $all"
+          [ "$scanned" = "$all" ]
+
+  deps:
+    name: Dependency scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      OSV_VERSION: 2.7.1
+      OSV_SHA256: fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm ci
+      - name: npm audit (any severity fails)
+        run: npm audit --audit-level=low
+      - name: npm registry signatures and provenance
+        run: npm audit signatures
+      - name: Install OSV-Scanner (checksum pinned)
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SHA256}  $RUNNER_TEMP/osv-scanner" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+          "$RUNNER_TEMP/osv-scanner" --version
+      - name: OSV-Scanner
+        run: |
+          rc=0
+          "$RUNNER_TEMP/osv-scanner" scan source --format=json -L package-lock.json > "$RUNNER_TEMP/osv.json" || rc=$?
+          python3 scripts/ci/osv-summary.py "$RUNNER_TEMP/osv.json" package-lock.json
+          exit "$rc"
+
+  codeql:
+    name: SAST (CodeQL, ${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+
+  semgrep:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep:1.185.0@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: semgrep --version
+      - name: Semgrep (any finding fails)
+        run: semgrep scan --config p/default --config p/typescript --error --metrics=off
