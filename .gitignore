@@ -42,3 +42,8 @@ next-env.d.ts
 
 # env template (holds no values)
 !.env.example
+
+# playwright
+/test-results/
+/playwright-report/
+/blob-report/
