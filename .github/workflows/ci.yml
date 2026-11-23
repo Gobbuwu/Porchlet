@@ -128,7 +128,9 @@ jobs:
   e2e:
     name: E2E (${{ matrix.browser }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # 30, not 15: on run 45214507704 the Ubuntu apt mirror was slow enough
+    # that `playwright install --with-deps webkit` alone used all 15 minutes.
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:

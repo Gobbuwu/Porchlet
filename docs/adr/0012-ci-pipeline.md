@@ -46,6 +46,6 @@ Node versions: Vercel offers 26.x (default), 24.x and 22.x ([Vercel docs](https:
 ## Consequences
 
 - The required checks for the `main` ruleset are the check names above, plus **CodeQL** (or the ruleset's code scanning rule). The steps are in M0.md.
-- A full run takes about 4.5 minutes of wall time; WebKit E2E is the longest job (about 4.5 minutes, mostly installing the browser).
+- A full run takes about 4.5 minutes of wall time; WebKit E2E is the longest job (about 4.5 minutes, mostly installing the browser). E2E jobs have a 30-minute limit because that install pulls system packages from the Ubuntu apt mirror, which once took over 15 minutes.
 - Not pinned: Semgrep's registry rule packs (`p/default`, `p/typescript`) change over time, and Playwright downloads browsers from Microsoft's CDN without a checksum we control. Recorded as gaps in M0.md.
 - Merge commits are skipped by the DCO script and by gitleaks (git shows no patch for them). With squash merges only, the PR's own commits are all checked.
