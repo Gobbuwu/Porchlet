@@ -169,9 +169,18 @@ jobs:
         run: scripts/ci/in-playwright-image.sh npm run build
       - name: Playwright
         run: scripts/ci/in-playwright-image.sh npx playwright test --project=${{ matrix.browser }}
+      # On failure: each failed test's page snapshot, and the whole auth log (a 200-line tail once
+      # began just after the failing request, PR 16). Workflow commands are paused while printing.
+      - name: Failed tests' page snapshots (on failure)
+        if: failure()
+        run: |
+          token=$(openssl rand -hex 16)
+          echo "::stop-commands::$token"
+          find test-results -name error-context.md -print -exec cat {} \;
+          echo "::$token::"
       - name: Auth container log (on failure)
         if: failure()
-        run: docker logs supabase_auth_porchlet 2>&1 | tail -n 200
+        run: docker logs supabase_auth_porchlet 2>&1
 
   secrets:
     name: Secret scan

@@ -1,4 +1,4 @@
-import { expect, test } from "./support/test";
+import { expect, test, waitForHydration } from "./support/test";
 import { confirmLink, mailCount } from "./support/mail";
 import {
   alertIn,
@@ -171,6 +171,7 @@ test("a login POST from another site's origin is refused", async ({ page, reques
   const user = await signUpAndConfirm(page, "origin");
   await page.context().clearCookies();
   await page.goto("/login");
+  await waitForHydration(page); // the replay below needs React's request, with its Next-Action header
   const post = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/login");
   await fillLogin(page, user.email, user.password);
   const real = await post;
@@ -244,6 +245,7 @@ test("over HTTPS the session cookie is __Host- prefixed, Secure and HttpOnly", a
   const user = await signUpAndConfirm(page, "https");
   await page.context().clearCookies();
   await page.goto("/login");
+  await waitForHydration(page); // the replay below needs React's request, with its Next-Action header
   const post = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/login");
   await fillLogin(page, user.email, user.password);
   const real = await post;
@@ -280,6 +282,7 @@ test("Supabase Auth's 429 shows the friendly rate-limit message", async ({ page,
   const user = await signUpAndConfirm(page, "ratelimit");
   await context.clearCookies();
   await page.goto("/forgot");
+  await waitForHydration(page); // only React's path keeps the typed email (ADR 0018)
   await page.getByLabel("Email").fill(user.email);
   await page.getByRole("button", { name: "Send reset link" }).click();
   await expect(page.getByRole("status")).toHaveText(
@@ -291,8 +294,7 @@ test("Supabase Auth's 429 shows the friendly rate-limit message", async ({ page,
   await expect(alertIn(page)).toHaveText("Too many attempts, try again later.");
 });
 
-// Without JavaScript the success path works, but error messages don't show (a known gap in
-// docs/milestones/M1.md), so only the success path is checked here.
+// Messages without JavaScript are checked in form-messages.spec.ts.
 test("login and logout work with JavaScript turned off", async ({ page, browser }) => {
   const user = await signUpAndConfirm(page, "nojs");
   const context = await browser.newContext({ javaScriptEnabled: false });

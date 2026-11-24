@@ -1,31 +1,56 @@
-// Turns Supabase Auth errors into messages for people. Raw server messages are never shown.
+// Every message the auth forms show, by code. Raw server messages are never shown.
+// The codes also travel in the URL after a form posted without JavaScript (ADR 0018), so a
+// page only ever shows one of these fixed texts, never text taken from the URL.
 // Error codes: https://supabase.com/docs/guides/auth/debugging/error-codes
 
-export const TOO_MANY_ATTEMPTS = "Too many attempts, try again later.";
-export const GENERIC_ERROR = "Something went wrong. Try again.";
+export const MESSAGES = {
+  "too-many-attempts": "Too many attempts, try again later.",
+  "something-went-wrong": "Something went wrong. Try again.",
+  "wrong-credentials": "Wrong email or password.",
+  "email-not-confirmed": "Confirm your email first. The link is in the email we sent you.",
+  "weak-password": "Choose a longer password: at least 10 characters.",
+  "same-password": "Choose a password that is different from your current one.",
+  "invalid-email": "Enter a valid email address.",
+  "link-used": "This link has expired or was already used. Ask for a new one.",
+  "link-invalid": "This link is not valid. Ask for a new one.",
+  "reset-expired": "Your reset link has expired. Ask for a new one.",
+  "signup-disabled": "Sign-up is turned off on this site.",
+  "signup-sent": "Check your email for a link to confirm your account.",
+  "reset-sent": "If an account uses that email, we sent it a link to choose a new password.",
+} as const;
+
+export type MessageCode = keyof typeof MESSAGES;
+
+export const TOO_MANY_ATTEMPTS: MessageCode = "too-many-attempts";
+export const GENERIC_ERROR: MessageCode = "something-went-wrong";
+
+/** The code's text, or undefined for anything that is not one of our codes. */
+export function messageText(code: unknown): string | undefined {
+  return typeof code === "string" && Object.hasOwn(MESSAGES, code) ? MESSAGES[code as MessageCode] : undefined;
+}
 
 type AuthErrorLike = { status?: number; code?: string };
 
-export function authErrorMessage(error: AuthErrorLike): string {
+export function authErrorCode(error: AuthErrorLike): MessageCode {
   // Every Supabase Auth rate limit answers HTTP 429 (over_request_rate_limit,
   // over_email_send_rate_limit, over_sms_send_rate_limit).
   if (error.status === 429 || error.code?.startsWith("over_")) return TOO_MANY_ATTEMPTS;
   switch (error.code) {
     case "invalid_credentials":
-      return "Wrong email or password.";
+      return "wrong-credentials";
     case "email_not_confirmed":
-      return "Confirm your email first. The link is in the email we sent you.";
+      return "email-not-confirmed";
     case "weak_password":
-      return "Choose a longer password: at least 10 characters.";
+      return "weak-password";
     case "same_password":
-      return "Choose a password that is different from your current one.";
+      return "same-password";
     case "email_address_invalid":
     case "validation_failed":
-      return "Enter a valid email address.";
+      return "invalid-email";
     case "otp_expired":
-      return "This link has expired or was already used. Ask for a new one.";
+      return "link-used";
     case "signup_disabled":
-      return "Sign-up is turned off on this site.";
+      return "signup-disabled";
     default:
       return GENERIC_ERROR;
   }

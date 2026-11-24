@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { authErrorMessage, GENERIC_ERROR, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
+import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
 import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
 import type { FormState } from "@/lib/auth/types";
@@ -17,13 +17,36 @@ const field = (formData: FormData, name: string) => {
   return typeof value === "string" ? value : "";
 };
 
-// Counts this attempt against Porchlet's per-visitor limits (ADR 0015). Returns a message for the
-// form when the visitor is over a limit or the limiter can't answer, else null.
+type Outcome = { error?: MessageCode; notice?: MessageCode; email?: string };
+
+// Answers a form post. When the hydrated page sent it (React's fetch, which carries Next.js's
+// Next-Action header), the result goes back to useActionState. A native form post (sent before
+// React hydrated, or with JavaScript off) is redirected to `page` with the message code in the
+// URL instead (Post/Redirect/Get), and the page shows the message: Next.js 16.4 renders the
+// response to such a post by resuming the prerendered shell, and React's resume() takes no form
+// state, so useActionState would show nothing (measured; ADR 0018, Next.js issue #99756).
+// The typed email is not put in the URL, so that path doesn't keep it.
+async function answer(page: string, outcome: Outcome): Promise<FormState> {
+  if ((await headers()).has("next-action")) {
+    const state: FormState = {};
+    if (outcome.error) state.error = MESSAGES[outcome.error];
+    if (outcome.notice) state.notice = MESSAGES[outcome.notice];
+    if (outcome.email !== undefined) state.email = outcome.email;
+    return state;
+  }
+  const url = new URL(page, "http://porchlet.invalid");
+  if (outcome.error) url.searchParams.set("error", outcome.error);
+  if (outcome.notice) url.searchParams.set("notice", outcome.notice);
+  redirect(url.pathname + url.search);
+}
+
+// Counts this attempt against Porchlet's per-visitor limits (ADR 0015). Returns a message code
+// for the form when the visitor is over a limit or the limiter can't answer, else null.
 async function limitError(
   supabase: Awaited<ReturnType<typeof createClient>>,
   rules: readonly Rule[],
   record: boolean,
-): Promise<string | null> {
+): Promise<MessageCode | null> {
   const result = await checkLimits(supabase, clientIp(await headers()), rules, record);
   if (result === "limited") return TOO_MANY_ATTEMPTS;
   if (result === "unavailable") return GENERIC_ERROR;
@@ -39,7 +62,7 @@ export async function signUp(_state: FormState, formData: FormData): Promise<For
   const email = field(formData, "email").trim();
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.signUp, true);
-  if (limited) return { error: limited, email };
+  if (limited) return answer("/signup", { error: limited, email });
   const { error } = await supabase.auth.signUp({
     email,
     password: field(formData, "password"),
@@ -48,18 +71,20 @@ export async function signUp(_state: FormState, formData: FormData): Promise<For
   // 422 user_already_exists for a confirmed address (measured, ADR 0014), so the page hides it.
   if (error && error.code !== "user_already_exists") {
     logAuthError("signup", error);
-    return { error: authErrorMessage(error), email };
+    return answer("/signup", { error: authErrorCode(error), email });
   }
-  return { notice: "Check your email for a link to confirm your account." };
+  return answer("/signup", { notice: "signup-sent" });
 }
 
 export async function logIn(_state: FormState, formData: FormData): Promise<FormState> {
   const email = field(formData, "email").trim();
+  const next = safeNext(field(formData, "next"));
+  const page = `/login?${new URLSearchParams({ next })}`;
   const supabase = await createClient();
   // Only failures count, so people who share an IP (an office, a campus) can all still log in.
   const rules = RULES.loginFailures(email);
   const limited = await limitError(supabase, rules, false);
-  if (limited) return { error: limited, email };
+  if (limited) return answer(page, { error: limited, email });
   const { error } = await supabase.auth.signInWithPassword({
     email,
     password: field(formData, "password"),
@@ -68,37 +93,37 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
     logAuthError("login", error);
     if (error.status !== 429) {
       const after = await limitError(supabase, rules, true);
-      if (after === GENERIC_ERROR) return { error: after, email };
+      if (after === GENERIC_ERROR) return answer(page, { error: after, email });
     }
-    return { error: authErrorMessage(error), email };
+    return answer(page, { error: authErrorCode(error), email });
   }
-  redirect(safeNext(field(formData, "next")));
+  redirect(next);
 }
 
 export async function requestReset(_state: FormState, formData: FormData): Promise<FormState> {
   const email = field(formData, "email").trim();
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.reset, true);
-  if (limited) return { error: limited, email };
+  if (limited) return answer("/forgot", { error: limited, email });
   const { error } = await supabase.auth.resetPasswordForEmail(email);
   if (error) {
     logAuthError("reset-request", error);
-    return { error: authErrorMessage(error), email };
+    return answer("/forgot", { error: authErrorCode(error), email });
   }
-  return { notice: "If an account uses that email, we sent it a link to choose a new password.", email };
+  return answer("/forgot", { notice: "reset-sent", email });
 }
 
 export async function setNewPassword(_state: FormState, formData: FormData): Promise<FormState> {
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.newPassword, true);
-  if (limited) return { error: limited };
+  if (limited) return answer("/reset", { error: limited });
   const { error } = await supabase.auth.updateUser({ password: field(formData, "password") });
   if (error) {
     logAuthError("reset-update", error);
     if (error.status === 401 || error.code === "session_not_found" || error.code === "no_authorization") {
-      return { error: "Your reset link has expired. Ask for a new one." };
+      return answer("/reset", { error: "reset-expired" });
     }
-    return { error: authErrorMessage(error) };
+    return answer("/reset", { error: authErrorCode(error) });
   }
   // Supabase Auth ends the account's other sessions on a password change (ASVS 5.0.0 7.4.3;
   // LogoutAllExceptMe in its models/user.go). Their access tokens stay valid until they expire
@@ -111,17 +136,19 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
 export async function confirmEmailLink(_state: FormState, formData: FormData): Promise<FormState> {
   const type = field(formData, "type");
   const tokenHash = field(formData, "token_hash");
+  // Back to the same link, so a visitor who was rate limited can press the button again.
+  const page = `/auth/confirm?${new URLSearchParams({ token_hash: tokenHash, type })}`;
   if ((type !== "email" && type !== "recovery") || !tokenHash) {
-    return { error: "This link is not valid. Ask for a new one." };
+    return answer(page, { error: "link-invalid" });
   }
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.verify, true);
-  if (limited) return { error: limited };
+  if (limited) return answer(page, { error: limited });
   const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
   if (error) {
     logAuthError(`verify-${type}`, error);
-    if (error.status === 429) return { error: authErrorMessage(error) };
-    return { error: "This link has expired or was already used. Ask for a new one." };
+    if (error.status === 429) return answer(page, { error: authErrorCode(error) });
+    return answer(page, { error: "link-used" });
   }
   redirect(type === "recovery" ? "/reset" : "/w");
 }
