@@ -18,6 +18,21 @@ test("sign-up with a common password is refused before an account is made", asyn
   expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
 });
 
+// Porchlet leaves passwords under 10 characters to Supabase Auth, so both must count the same
+// way: in characters (code points). Supabase does (measured with GoTrue v2.198.0); if an upgrade
+// counted bytes, a short multi-byte password would be accepted without Porchlet's check.
+// 5 emoji are 5 characters, 20 bytes and 10 UTF-16 units: the field's minlength counts UTF-16
+// units, so the browser lets the form through and the server decides.
+test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }) => {
+  const user = newUser("short-multibyte");
+  await page.goto("/signup");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel(/^Password/).fill("😀".repeat(5));
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(alertIn(page)).toHaveText("Choose a longer password: at least 10 characters.");
+  expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
+});
+
 // The breach lookup itself, with a stand-in for the Pwned Passwords API (no browser needed, so it
 // runs once, in the chromium project). SHA-1("password1234") is E6B6A + FBD6D76BB5D2041542D7D2E3FAC5BB05593.
 test.describe("breach lookup", () => {
@@ -71,6 +86,13 @@ test.describe("breach lookup", () => {
     expect(await newPasswordProblem("not-in-the-list-1", api("", 500))).toBeNull();
     expect(await newPasswordProblem("not-in-the-list-1", api(`${other}:0`))).toBeNull();
     expect(await newPasswordProblem("short", api(`${SUFFIX}:7`))).toBeNull();
+    // Length is counted in characters (code points), as Supabase Auth counts it (ADR 0019):
+    // 9 two-byte characters are short and left to Supabase; 10 are checked.
+    calls.length = 0;
+    expect(await newPasswordProblem("é".repeat(9), api(""))).toBeNull();
+    expect(calls, "9 characters (18 bytes) is short: no API call").toHaveLength(0);
+    await newPasswordProblem("é".repeat(10), api(""));
+    expect(calls, "10 characters is checked").toHaveLength(1);
     expect(isCommonPassword("BASKETBALL")).toBe(true);
   });
 });
