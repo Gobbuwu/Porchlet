@@ -4,7 +4,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
 import { loginNeedsPasswordChange, newPasswordProblem } from "@/lib/auth/password-check";
-import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
+import { clientIp, releaseLimits, type Rule, RULES, takeLimits } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
 import type { FormState } from "@/lib/auth/types";
 import { isHttps } from "@/lib/http";
@@ -43,17 +43,17 @@ async function answer(page: string, outcome: Outcome): Promise<FormState> {
   redirect(url.pathname + url.search);
 }
 
-// Counts this attempt against Porchlet's per-visitor limits (ADR 0015). Returns a message code
-// for the form when the visitor is over a limit or the limiter can't answer, else null.
-async function limitError(
+// Counts this attempt against Porchlet's per-visitor limits (ADR 0015, 0022). Returns a message
+// code for the form when the visitor is over a limit or the limiter can't answer; otherwise the
+// ids of the hits taken, which a login gives back when the password proves right.
+async function takeAttempt(
   supabase: Awaited<ReturnType<typeof createClient>>,
   rules: readonly Rule[],
-  record: boolean,
-): Promise<MessageCode | null> {
-  const result = await checkLimits(supabase, clientIp(await headers()), rules, record);
-  if (result === "limited") return TOO_MANY_ATTEMPTS;
-  if (result === "unavailable") return GENERIC_ERROR;
-  return null;
+): Promise<{ error: MessageCode } | { hits: number[] }> {
+  const result = await takeLimits(supabase, clientIp(await headers()), rules);
+  if (result.status === "limited") return { error: TOO_MANY_ATTEMPTS };
+  if (result.status === "unavailable") return { error: GENERIC_ERROR };
+  return { hits: result.hits };
 }
 
 // Sets or clears the cookie that sends this browser's app pages to /reset (ADR 0021). It holds the
@@ -112,8 +112,8 @@ function logAuthError(action: string, error: { status?: number; code?: string })
 export async function signUp(_state: FormState, formData: FormData): Promise<FormState> {
   const email = field(formData, "email").trim();
   const supabase = await createClient();
-  const limited = await limitError(supabase, RULES.signUp, true);
-  if (limited) return answer("/signup", { error: limited, email });
+  const taken = await takeAttempt(supabase, RULES.signUp);
+  if ("error" in taken) return answer("/signup", { error: taken.error, email });
   const password = field(formData, "password");
   // Checked before Supabase sees the email, so the answer is the same for every address.
   const problem = await newPasswordProblem(password);
@@ -133,20 +133,20 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
   const next = safeNext(field(formData, "next"));
   const page = `/login?${new URLSearchParams({ next })}`;
   const supabase = await createClient();
-  // Only failures count, so people who share an IP (an office, a campus) can all still log in.
-  const rules = RULES.loginFailures(email);
-  const limited = await limitError(supabase, rules, false);
-  if (limited) return answer(page, { error: limited, email });
+  // Only failures count, so people who share an IP (an office, a campus) can all still log in. The
+  // attempt takes its slot first and gives it back on success (ADR 0022): counting only after
+  // Supabase answered let parallel guesses all pass the check.
+  const taken = await takeAttempt(supabase, RULES.loginFailures(email));
+  if ("error" in taken) return answer(page, { error: taken.error, email });
   const password = field(formData, "password");
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
     logAuthError("login", error);
-    if (error.status !== 429) {
-      const after = await limitError(supabase, rules, true);
-      if (after === GENERIC_ERROR) return answer(page, { error: after, email });
-    }
+    // A 429 means Supabase refused before checking the password, so it wasn't a guess.
+    if (error.status === 429) await releaseLimits(supabase, taken.hits);
     return answer(page, { error: authErrorCode(error), email });
   }
+  await releaseLimits(supabase, taken.hits);
   // The new-password check runs again at every login (ADR 0021), only after the password proved
   // right. It catches passwords set by calling Supabase Auth directly, set before ADR 0019, or
   // breached since. A flagged session can't use the app until the password is changed.
@@ -161,8 +161,8 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
 export async function requestReset(_state: FormState, formData: FormData): Promise<FormState> {
   const email = field(formData, "email").trim();
   const supabase = await createClient();
-  const limited = await limitError(supabase, RULES.reset, true);
-  if (limited) return answer("/forgot", { error: limited, email });
+  const taken = await takeAttempt(supabase, RULES.reset);
+  if ("error" in taken) return answer("/forgot", { error: taken.error, email });
   const { error } = await supabase.auth.resetPasswordForEmail(email);
   if (error) {
     logAuthError("reset-request", error);
@@ -173,8 +173,8 @@ export async function requestReset(_state: FormState, formData: FormData): Promi
 
 export async function setNewPassword(_state: FormState, formData: FormData): Promise<FormState> {
   const supabase = await createClient();
-  const limited = await limitError(supabase, RULES.newPassword, true);
-  if (limited) return answer("/reset", { error: limited });
+  const taken = await takeAttempt(supabase, RULES.newPassword);
+  if ("error" in taken) return answer("/reset", { error: taken.error });
   const password = field(formData, "password");
   const problem = await newPasswordProblem(password);
   if (problem) return answer("/reset", { error: problem });
@@ -206,8 +206,8 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
     return answer(page, { error: "link-invalid" });
   }
   const supabase = await createClient();
-  const limited = await limitError(supabase, RULES.verify, true);
-  if (limited) return answer(page, { error: limited });
+  const taken = await takeAttempt(supabase, RULES.verify);
+  if ("error" in taken) return answer(page, { error: taken.error });
   // An emailed link starts a new session; if this browser's current session is flagged by the login
   // check, the new one is flagged too, so a link is no way around the change (ADR 0021). As in the
   // proxy, the flag counts only while it holds the current session's id.
