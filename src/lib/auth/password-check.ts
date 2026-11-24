@@ -19,7 +19,7 @@ const HIBP_TIMEOUT_MS = 2000;
 const MIN_LENGTH = 10;
 // Supabase Auth's maximum, in UTF-8 bytes (bcrypt's limit). Supabase refuses longer passwords with
 // validation_failed, the code it also uses for a bad email, so Porchlet checks this itself to give
-// the right message (ADR 0021). The field's maxlength counts UTF-16 units, so it can't.
+// the right message (ADR 0021). The field's maxlength doesn't count bytes, so it can't.
 const MAX_BYTES = 72;
 
 export type BreachResult = "breached" | "not-found" | "unavailable";

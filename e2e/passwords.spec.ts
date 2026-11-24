@@ -21,11 +21,13 @@ test("sign-up with a common password is refused before an account is made", asyn
 // Porchlet leaves passwords under 10 characters to Supabase Auth, so both must count the same
 // way: in characters (code points). Supabase does (measured with GoTrue v2.198.0); if an upgrade
 // counted bytes, a short multi-byte password would be accepted without Porchlet's check.
-// 5 emoji are 5 characters, 20 bytes and 10 UTF-16 units: the field's minlength counts UTF-16
-// units, so the browser lets the form through and the server decides.
+// 5 emoji are 5 characters, 20 bytes and 10 UTF-16 units. Browsers count the field's minlength
+// differently, so the browser check is turned off and the server decides.
 test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }) => {
   const user = newUser("short-multibyte");
   await page.goto("/signup");
+  const create = page.getByRole("button", { name: "Create account" });
+  await page.locator("form", { has: create }).evaluate((f: HTMLFormElement) => (f.noValidate = true));
   await page.getByLabel("Email").fill(user.email);
   await page.getByLabel(/^Password/).fill("😀".repeat(5));
   await page.getByRole("button", { name: "Create account" }).click();
@@ -35,10 +37,12 @@ test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }
 
 // Supabase's maximum is 72 bytes, and it refuses longer passwords with the code it uses for a bad
 // email, so Porchlet checks the length itself (ADR 0021). 19 emoji are 76 bytes but only 38 UTF-16
-// units, so they pass the field's maxlength of 72.
+// units, under the field's maxlength of 72; the browser check is off anyway, as above.
 test("a password over 72 bytes is refused as too long, not as a bad email", async ({ page }) => {
   const user = newUser("long-multibyte");
   await page.goto("/signup");
+  const create = page.getByRole("button", { name: "Create account" });
+  await page.locator("form", { has: create }).evaluate((f: HTMLFormElement) => (f.noValidate = true));
   await page.getByLabel("Email").fill(user.email);
   await page.getByLabel(/^Password/).fill("😀".repeat(19));
   await page.getByRole("button", { name: "Create account" }).click();
@@ -112,7 +116,7 @@ test.describe("breach lookup", () => {
     expect(await newPasswordProblem("not-in-the-list-1", api("", 500))).toBeNull();
     expect(await newPasswordProblem("not-in-the-list-1", api(`${other}:0`))).toBeNull();
     expect(await newPasswordProblem("short", api(`${SUFFIX}:7`))).toBeNull();
-    // Length is counted in characters (code points), as Supabase Auth counts it (ADR 0019):
+    // Length is counted in characters (code points), as Supabase Auth counts it (ADR 0021):
     // 9 two-byte characters are short and left to Supabase; 10 are checked.
     calls.length = 0;
     expect(await newPasswordProblem("é".repeat(9), api(""))).toBeNull();

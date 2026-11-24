@@ -27,7 +27,7 @@ Measured with direct `POST /auth/v1/signup` calls:
 | 19 emoji | 76 | 19 | 400 `validation_failed` |
 
 - **Minimum: no bypass.** Supabase counts code points, as `[...password].length` does, so nothing under 10 characters reaches Supabase unrefused and nothing of 10 or more skips Porchlet's check. Review question 1 is answered no.
-- **Maximum: wrong message (fixed).** Supabase's maximum is 72 UTF-8 bytes (bcrypt's limit), and it answers `validation_failed`, the code it also uses for a malformed email, which Porchlet showed as "Enter a valid email address." (measured: 19 emoji at sign-up through the app). The field's `maxlength="72"` counts UTF-16 units, so 19 emoji (38 units) get past the browser.
+- **Maximum: wrong message (fixed).** Supabase's maximum is 72 UTF-8 bytes (bcrypt's limit), and it answers `validation_failed`, the code it also uses for a malformed email, which Porchlet showed as "Enter a valid email address." (measured: 19 emoji at sign-up through the app). The field's `maxlength="72"` doesn't count bytes (Chromium counts UTF-16 units), so 19 emoji (38 units) get past the browser.
 
 **Decision (Part 1):** `newPasswordProblem` refuses a password over 72 UTF-8 bytes first, with its own message ("Choose a shorter password: at most 72 bytes, …"), before the list and the API. The reset action no longer maps `validation_failed` to the email message, since its page has no email field. The 10-character minimum stays with Supabase.
 
@@ -59,5 +59,5 @@ Options, measured or sourced on 2026-11-24:
 ## Consequences
 
 - ASVS 5.0.0 6.2.9 (at least 64 characters allowed) holds for ASCII passwords only. A passphrase in a script that needs 2 to 4 bytes per character is limited to 18 to 36 characters by Supabase's bcrypt limit. Porchlet can't raise it on the free plan. Recorded in M1.md.
-- Tests in `e2e/passwords.spec.ts`: 5 emoji refused as too short and 19 emoji refused as too long at sign-up through the app (no email sent); `newPasswordProblem` skips 9 two-byte characters, checks 10, refuses 73 bytes and 19 emoji with no lookup, and checks 18 emoji. The lookup tests now turn the breach check on for themselves, so `BREACHED_PASSWORD_CHECK=off` in the runner's environment doesn't fail them.
+- Tests in `e2e/passwords.spec.ts`: 5 emoji refused as too short and 19 emoji refused as too long at sign-up through the app, with the browser's own check off (no email sent); `e2e/auth.spec.ts`: 19 emoji refused as too long on `/reset`; `newPasswordProblem` skips 9 two-byte characters, checks 10, refuses 73 bytes and 19 emoji with no lookup, and checks 18 emoji. The lookup tests now turn the breach check on for themselves, so `BREACHED_PASSWORD_CHECK=off` in the runner's environment doesn't fail them.
 - If a Supabase upgrade changes how it counts either limit, the two sign-up tests fail.
