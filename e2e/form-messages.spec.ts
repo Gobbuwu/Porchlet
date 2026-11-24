@@ -75,6 +75,8 @@ test.describe("with JavaScript turned off", () => {
     await expect(page.getByRole("status")).toHaveText("Your password has been changed.");
 
     await page.getByRole("button", { name: "Log out" }).click();
+    // Wait for the logout to land before the next navigation, so the two don't overlap.
+    await expect(page).toHaveURL(/\/login\?signed_out=1$/);
     await page.goto("/forgot");
     await page.getByLabel("Email").fill(user.email);
     await page.getByRole("button", { name: "Send reset link" }).click();

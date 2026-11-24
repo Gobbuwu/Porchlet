@@ -9,10 +9,19 @@ export function randomIp(): string {
   return `10.${randomInt(256)}.${randomInt(256)}.${randomInt(1, 255)}`;
 }
 
-export const test = base.extend({
+export const test = base.extend<{ logUrlOnFailure: void }>({
   extraHTTPHeaders: async ({ extraHTTPHeaders }, provide) => {
     await provide({ ...extraHTTPHeaders, "x-forwarded-for": randomIp() });
   },
+  // CI keeps no traces, so a failed test prints the page it ended on; with the page snapshot in
+  // error-context.md (printed by the CI step on failure) that shows where a flow went wrong.
+  logUrlOnFailure: [
+    async ({ page }, provide, testInfo) => {
+      await provide();
+      if (testInfo.status !== testInfo.expectedStatus) console.log(`[failed at] ${page.url()}`);
+    },
+    { auto: true },
+  ],
 });
 
 // Waits until React has hydrated the page's form, so a click goes through React (a fetch with
