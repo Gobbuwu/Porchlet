@@ -48,6 +48,8 @@ Option 4.
 
 **Supabase's own limits stay on as a backstop** for attacks spread over many IPs. The M5 setup wizard raises them so normal traffic doesn't reach them; until then they stay at Supabase's defaults.
 
+*Note, 2026-11-24 (measured in the SiegeKit PR 75 H1 rerun, [M1.md](../milestones/M1.md#siegekit-pr-73-and-pr-75-run-2026-11-24)):* Supabase limits password sign-ins at the refill rate of its **token refresh** setting, not "sign-ups and sign-ins". The same bucket serves the server's session refreshes, and through the app it is shared by every visitor (one server IP). So the M5 wizard must set the token refresh limit on purpose, trading refresh headroom against how loose the sign-in backstop is.
+
 ## Consequences
 
 - The setup wizard (M5) generates `RATE_LIMIT_KEY`, stores its hash with the Management API, and sets the env var. Locally, `scripts/e2e/write-env.sh` does both.
