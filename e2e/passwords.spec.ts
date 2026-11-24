@@ -1,7 +1,13 @@
-import { breachStatus, isCommonPassword, newPasswordProblem } from "../src/lib/auth/password-check";
-import { mailCount } from "./support/mail";
+import {
+  breachStatus,
+  isCommonPassword,
+  loginNeedsPasswordChange,
+  newPasswordProblem,
+} from "../src/lib/auth/password-check";
+import type { BrowserContext } from "@playwright/test";
+import { confirmLink, mailCount } from "./support/mail";
 import { expect, test } from "./support/test";
-import { alertIn, newUser } from "./support/users";
+import { alertIn, fillLogin, newUser, readSession, signUpAndConfirm, supabaseEnv } from "./support/users";
 
 // New passwords are checked against common and breached passwords (ADR 0019).
 
@@ -18,10 +24,156 @@ test("sign-up with a common password is refused before an account is made", asyn
   expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
 });
 
+// The minimum counts characters (code points), in Porchlet and in Supabase Auth (measured with
+// GoTrue v2.198.0); counting bytes would let a short multi-byte password through (ADR 0021).
+// 5 emoji are 5 characters, 20 bytes and 10 UTF-16 units. Browsers count the field's minlength
+// differently, so the browser check is turned off and the server decides.
+test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }) => {
+  const user = newUser("short-multibyte");
+  await page.goto("/signup");
+  const create = page.getByRole("button", { name: "Create account" });
+  await page.locator("form", { has: create }).evaluate((f: HTMLFormElement) => (f.noValidate = true));
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel(/^Password/).fill("😀".repeat(5));
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(alertIn(page)).toHaveText("Choose a longer password: at least 10 characters.");
+  expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
+});
+
+// Supabase's maximum is 72 bytes, and it refuses longer passwords with the code it uses for a bad
+// email, so Porchlet checks the length itself (ADR 0021). 19 emoji are 76 bytes but only 38 UTF-16
+// units, under the field's maxlength of 72; the browser check is off anyway, as above.
+test("a password over 72 bytes is refused as too long, not as a bad email", async ({ page }) => {
+  const user = newUser("long-multibyte");
+  await page.goto("/signup");
+  const create = page.getByRole("button", { name: "Create account" });
+  await page.locator("form", { has: create }).evaluate((f: HTMLFormElement) => (f.noValidate = true));
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel(/^Password/).fill("😀".repeat(19));
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(alertIn(page)).toHaveText(
+    "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
+  );
+  expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
+});
+
+// Sets the signed-in user's password by calling Supabase Auth directly, skipping the app's check.
+// "password1234" is in the bundled list, so the login check needs no Pwned Passwords call.
+async function setPasswordDirectly(context: BrowserContext, password: string) {
+  const { url, key } = supabaseEnv();
+  const { access_token } = await readSession(context);
+  const response = await fetch(`${url}/auth/v1/user`, {
+    method: "PUT",
+    headers: { apikey: key, authorization: `Bearer ${access_token}`, "content-type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  expect(response.status, "Supabase Auth takes the password directly").toBe(200);
+}
+
+// The check runs again at every login (ADR 0021). A password set by calling Supabase Auth
+// directly skips the sign-up and reset checks; the next login catches it and the session can't use
+// the app until the password is changed.
+test("a login with a common password set outside the app must change it first", async ({ page, context }) => {
+  const user = await signUpAndConfirm(page, "weak-login");
+  await setPasswordDirectly(context, "password1234");
+  await page.getByRole("button", { name: "Log out" }).click();
+
+  const REQUIRED =
+    "The password you logged in with is too short, too common or has appeared in a data breach. Choose a new one to continue.";
+  await fillLogin(page, user.email, "password1234");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  await expect(alertIn(page)).toHaveText(REQUIRED);
+  // Every app page sends the flagged session back here.
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  // The flag outlives a browser restart (a session-only cookie would not), belongs to this session
+  // only, and the page offers a way out.
+  const flag = (await context.cookies()).find((c) => c.name === "porchlet-password-change");
+  expect(flag?.expires, "flag cookie is persistent").toBeGreaterThan(Date.now() / 1000 + 86_400);
+  expect(flag?.httpOnly).toBe(true);
+  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  // The new password is checked as usual.
+  await page.getByLabel(/^New password/).fill("password12345");
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(alertIn(page)).toHaveText(COMMON_MESSAGE);
+
+  const strong = `${user.password}-new`;
+  await page.getByLabel(/^New password/).fill(strong);
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(page).toHaveURL(/\/w\?password=changed$/);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/w$/);
+  await page.getByRole("button", { name: "Log out" }).click();
+  await fillLogin(page, user.email, strong);
+  await expect(page).toHaveURL(/\/w$/);
+  expect((await context.cookies()).map((c) => c.name)).not.toContain("porchlet-password-change");
+});
+
+test("a leftover flag cookie from another session doesn't hold up a different sign-in", async ({ page, context }) => {
+  const user = await signUpAndConfirm(page, "stale-flag");
+  const [session] = (await context.cookies()).filter((c) => /^porchlet-auth/.test(c.name));
+  // As if a flagged session had ended without logging out, leaving its cookie behind.
+  await context.addCookies([{ ...session, name: "porchlet-password-change", value: "a-session-that-ended" }]);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/w$/);
+  // Nor does it flag the session a reset link starts.
+  await page.goto("/forgot");
+  await page.getByLabel("Email").fill(user.email);
+  const before = await mailCount(user.email);
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  await page.goto(await confirmLink(user.email, /Reset your Porchlet password/, before));
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page).toHaveURL(/\/reset$/);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/w$/);
+});
+
+test("a reset link doesn't get a flagged session past the change", async ({ page, context }) => {
+  const user = await signUpAndConfirm(page, "flag-reset-link");
+  await setPasswordDirectly(context, "password1234");
+  await page.getByRole("button", { name: "Log out" }).click();
+  await fillLogin(page, user.email, "password1234");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  // Ask for a reset email in the same browser and open its link: a new session starts.
+  await page.goto("/forgot");
+  await page.getByLabel("Email").fill(user.email);
+  const before = await mailCount(user.email);
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  await page.goto(await confirmLink(user.email, /Reset your Porchlet password/, before));
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page).toHaveURL(/\/reset$/);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+});
+
+test("a flagged session can log out from /reset", async ({ page, context }) => {
+  const user = await signUpAndConfirm(page, "flag-logout");
+  await setPasswordDirectly(context, "password1234");
+  await page.getByRole("button", { name: "Log out" }).click();
+  await fillLogin(page, user.email, "password1234");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page).toHaveURL(/\/login\?signed_out=1$/);
+  expect((await context.cookies()).map((c) => c.name)).not.toContain("porchlet-password-change");
+});
+
 // The breach lookup itself, with a stand-in for the Pwned Passwords API (no browser needed, so it
 // runs once, in the chromium project). SHA-1("password1234") is E6B6A + FBD6D76BB5D2041542D7D2E3FAC5BB05593.
 test.describe("breach lookup", () => {
   test.skip(({ browserName }) => browserName !== "chromium", "plain Node code: one browser is enough");
+
+  // newPasswordProblem reads BREACHED_PASSWORD_CHECK; these tests need the lookup on, even when
+  // the runner's environment turns it off (as .env.example allows for hosts without internet).
+  const saved = process.env.BREACHED_PASSWORD_CHECK;
+  test.beforeEach(() => {
+    delete process.env.BREACHED_PASSWORD_CHECK;
+  });
+  test.afterEach(() => {
+    if (saved === undefined) delete process.env.BREACHED_PASSWORD_CHECK;
+    else process.env.BREACHED_PASSWORD_CHECK = saved;
+  });
 
   const SUFFIX = "FBD6D76BB5D2041542D7D2E3FAC5BB05593";
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -60,7 +212,7 @@ test.describe("breach lookup", () => {
     expect(await breachStatus("password1234", hang)).toBe("unavailable");
   });
 
-  test("newPasswordProblem: list first, then the API; unavailable accepts; short is left to Supabase", async () => {
+  test("newPasswordProblem: length, then the list, then the API; unavailable accepts", async () => {
     // "not-in-the-list-1" is not in the bundled list; its SHA-1 is F7C93 + the suffix below.
     const other = "A02E31A059F04DE0F44292982624D4C5ADA";
     calls.length = 0;
@@ -70,7 +222,27 @@ test.describe("breach lookup", () => {
     expect(calls[0].url).toBe("https://api.pwnedpasswords.com/range/F7C93");
     expect(await newPasswordProblem("not-in-the-list-1", api("", 500))).toBeNull();
     expect(await newPasswordProblem("not-in-the-list-1", api(`${other}:0`))).toBeNull();
-    expect(await newPasswordProblem("short", api(`${SUFFIX}:7`))).toBeNull();
+    expect(await newPasswordProblem("short", api(`${SUFFIX}:7`))).toBe("weak-password");
+    // Length is counted in characters (code points), as Supabase Auth counts it (ADR 0021):
+    // 9 two-byte characters are too short, with no lookup; 10 are checked.
+    calls.length = 0;
+    expect(await newPasswordProblem("é".repeat(9), api(""))).toBe("weak-password");
+    expect(calls, "9 characters (18 bytes) is short: no API call").toHaveLength(0);
+    await newPasswordProblem("é".repeat(10), api(""));
+    expect(calls, "10 characters is checked").toHaveLength(1);
+    // Over 72 bytes (Supabase's maximum) is refused before any lookup; 72 bytes is checked.
+    calls.length = 0;
+    expect(await newPasswordProblem("x".repeat(73), api(""))).toBe("password-too-long");
+    expect(await newPasswordProblem("😀".repeat(19), api(""))).toBe("password-too-long");
+    expect(calls, "too long: no API call").toHaveLength(0);
+    expect(await newPasswordProblem("😀".repeat(18), api(""))).toBeNull();
+    expect(calls, "72 bytes is checked").toHaveLength(1);
     expect(isCommonPassword("BASKETBALL")).toBe(true);
+    // At login (ADR 0021): a password under the minimum also needs a change, with no lookup.
+    calls.length = 0;
+    expect(await loginNeedsPasswordChange("short1234", api(""))).toBe(true);
+    expect(calls, "a short password needs no API call").toHaveLength(0);
+    expect(await loginNeedsPasswordChange("password1234", api(""))).toBe(true);
+    expect(await loginNeedsPasswordChange("not-in-the-list-1", api(""))).toBe(false);
   });
 });

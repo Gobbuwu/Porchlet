@@ -133,6 +133,13 @@ test("password reset by email", async ({ page, context }) => {
     "Choose a different password: this one is too common or has appeared in a data breach.",
   );
 
+  // Over Supabase's 72-byte maximum: the length message, not an email one (ADR 0021).
+  await page.getByLabel(/^New password/).fill("😀".repeat(19));
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(alertIn(page)).toHaveText(
+    "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
+  );
+
   const newPassword = `${user.password}-new`;
   await page.getByLabel(/^New password/).fill(newPassword);
   await page.getByRole("button", { name: "Save new password" }).click();

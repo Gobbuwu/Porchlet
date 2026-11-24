@@ -23,6 +23,16 @@ export function authCookieOptions(secure: boolean): CookieOptionsWithName {
   return { name: secure ? `__Host-${AUTH_COOKIE}` : AUTH_COOKIE };
 }
 
+// Set at login when the password the user signed in with is common or breached (ADR 0021). It
+// holds that session's id; while it matches the signed-in session, the proxy sends app pages to
+// /reset. A password change or logout removes it.
+// It holds no secret: removing it by hand only skips the prompt for the user's own account.
+const PASSWORD_CHANGE_COOKIE = "porchlet-password-change";
+
+export function passwordChangeCookieName(secure: boolean): string {
+  return secure ? `__Host-${PASSWORD_CHANGE_COOKIE}` : PASSWORD_CHANGE_COOKIE;
+}
+
 export function isAuthCookie(name: string): boolean {
   return name.startsWith(AUTH_COOKIE) || name.startsWith(`__Host-${AUTH_COOKIE}`);
 }

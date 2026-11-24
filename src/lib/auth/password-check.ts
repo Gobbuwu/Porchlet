@@ -13,9 +13,14 @@ const COMMON = new Set(COMMON_PASSWORDS);
 
 export const HIBP_RANGE_URL = "https://api.pwnedpasswords.com/range/";
 const HIBP_TIMEOUT_MS = 2000;
-// supabase/config.toml minimum_password_length. Shorter passwords are left to Supabase Auth, which
-// refuses them with weak_password, so the user is told the length rule rather than this one.
+// The minimum, in characters (code points). Porchlet enforces it itself rather than leaving it to
+// the Supabase project's own minimum_password_length, which can be lower on a hosted project; the
+// login check (ADR 0021) flags anything shorter, so setting a password must refuse it too.
 const MIN_LENGTH = 10;
+// Supabase Auth's maximum, in UTF-8 bytes (bcrypt's limit). Supabase refuses longer passwords with
+// validation_failed, the code it also uses for a bad email, so Porchlet checks this itself to give
+// the right message (ADR 0021). The field's maxlength doesn't count bytes, so it can't.
+const MAX_BYTES = 72;
 
 export type BreachResult = "breached" | "not-found" | "unavailable";
 type Fetch = typeof fetch;
@@ -50,15 +55,24 @@ function breachCheckEnabled(): boolean {
   return process.env.BREACHED_PASSWORD_CHECK !== "off";
 }
 
+/**
+ * Whether a password that just signed in must be changed before the app can be used (ADR 0021):
+ * shorter than the minimum (set under an older or looser Supabase setting), or common or breached.
+ */
+export async function loginNeedsPasswordChange(password: string, fetchImpl: Fetch = fetch): Promise<boolean> {
+  return (await newPasswordProblem(password, fetchImpl)) !== null;
+}
+
 /** Why the password can't be used, or null when it can. */
 export async function newPasswordProblem(
   password: string,
   fetchImpl: Fetch = fetch,
-): Promise<"common-password" | null> {
-  if ([...password].length < MIN_LENGTH) return null;
+): Promise<"weak-password" | "common-password" | "password-too-long" | null> {
+  if (Buffer.byteLength(password, "utf8") > MAX_BYTES) return "password-too-long";
+  if ([...password].length < MIN_LENGTH) return "weak-password";
   if (isCommonPassword(password)) return "common-password";
   if (!breachCheckEnabled()) return null;
   const status = await breachStatus(password, fetchImpl);
-  if (status === "unavailable") console.warn("breached-password check unavailable; password accepted");
+  if (status === "unavailable") console.warn("breached-password check unavailable; only the bundled list applied");
   return status === "breached" ? "common-password" : null;
 }

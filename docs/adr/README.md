@@ -19,5 +19,6 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0018](0018-native-form-posts-redirect-with-message.md) | Native form posts get their message through a redirect | Accepted |
 | [0019](0019-common-and-breached-password-check.md) | New passwords are checked against a bundled common list and Pwned Passwords | Accepted |
 | [0020](0020-session-limits-in-the-database.md) | Session lifetime limits set in the database | Accepted |
+| [0021](0021-password-length-and-login-check.md) | Password length checked like Supabase counts it; passwords checked again at every login | Accepted |
 
 ADRs 0006-0010 are written when their milestone starts (see the M0 doc).

@@ -4,11 +4,12 @@ import { AuthForm } from "@/components/auth-form";
 import { PasswordField } from "@/components/fields";
 import { formStateFromParams } from "@/lib/auth/types";
 import { createClient } from "@/lib/supabase/server";
-import { setNewPassword } from "../actions";
+import { logOut, setNewPassword } from "../actions";
 
 export const metadata: Metadata = { title: "Choose a new password · Porchlet" };
 
-// Reached from the reset email: /auth/confirm verifies the link and signs the user in first.
+// Reached from the reset email (/auth/confirm verifies the link and signs the user in first), or
+// after a login with a common or breached password (ADR 0021).
 export default async function ResetPage({ searchParams }: PageProps<"/reset">) {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
@@ -28,6 +29,10 @@ export default async function ResetPage({ searchParams }: PageProps<"/reset">) {
       <AuthForm action={setNewPassword} initialState={formStateFromParams(await searchParams)} submitLabel="Save new password">
         <PasswordField label="New password (at least 10 characters)" autoComplete="new-password" />
       </AuthForm>
+      {/* A session sent here by the login check (ADR 0021) can't reach /w, so it logs out here. */}
+      <form action={logOut}>
+        <button type="submit">Log out</button>
+      </form>
     </main>
   );
 }

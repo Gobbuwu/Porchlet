@@ -1,12 +1,14 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
-import { newPasswordProblem } from "@/lib/auth/password-check";
+import { loginNeedsPasswordChange, newPasswordProblem } from "@/lib/auth/password-check";
 import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
 import type { FormState } from "@/lib/auth/types";
+import { isHttps } from "@/lib/http";
+import { hardenCookie, passwordChangeCookieName } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 
 // Auth runs here, on the server, so the session cookie can be HttpOnly (ADR 0014).
@@ -54,6 +56,54 @@ async function limitError(
   return null;
 }
 
+// Sets or clears the cookie that sends this browser's app pages to /reset (ADR 0021). It holds the
+// flagged session's id, and the proxy acts on it only while that session is the signed-in one, so
+// it can't follow a later sign-in. It lives as long as the session cookies (@supabase/ssr's 400
+// days), so closing the browser doesn't drop it, and is cleared with the same attributes, which a
+// __Host- cookie needs.
+const FLAG_MAX_AGE = 400 * 24 * 60 * 60;
+
+async function requirePasswordChange(sessionId: string | null) {
+  const secure = isHttps(await headers());
+  (await cookies()).set(passwordChangeCookieName(secure), sessionId ?? "", {
+    ...hardenCookie({}, secure),
+    maxAge: sessionId ? FLAG_MAX_AGE : 0,
+  });
+}
+
+// The session id (the session_id claim) of an access token Supabase Auth just issued to this
+// server. Not a verification: the token came straight from Supabase over the server's own call.
+function sessionIdOf(accessToken: string): string | null {
+  try {
+    const claims = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString("utf8"));
+    return typeof claims.session_id === "string" && claims.session_id ? claims.session_id : null;
+  } catch {
+    return null;
+  }
+}
+
+// Ends this browser's session and its password-change flag. "local" leaves the user's other
+// devices signed in. auth-js removes the session cookies before it asks Supabase to revoke the
+// refresh token, so the browser is signed out even when that call fails (measured with Supabase
+// Auth stopped: a 500 after about a minute, and no session cookie left; ADR 0021).
+async function endSession(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { error } = await supabase.auth.signOut({ scope: "local" });
+  if (error) logAuthError("logout", error);
+  await requirePasswordChange(null);
+}
+
+// Flags the session that `accessToken` belongs to. Without a session id the flag couldn't be
+// matched, so it fails closed: the session is ended and false returned.
+async function flagSession(supabase: Awaited<ReturnType<typeof createClient>>, accessToken: string | undefined) {
+  const sessionId = sessionIdOf(accessToken ?? "");
+  if (!sessionId) {
+    await endSession(supabase);
+    return false;
+  }
+  await requirePasswordChange(sessionId);
+  return true;
+}
+
 function logAuthError(action: string, error: { status?: number; code?: string }) {
   // Status and code only: never the email or the password.
   console.warn(`auth ${action} failed: status=${error.status} code=${error.code}`);
@@ -87,10 +137,8 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
   const rules = RULES.loginFailures(email);
   const limited = await limitError(supabase, rules, false);
   if (limited) return answer(page, { error: limited, email });
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password: field(formData, "password"),
-  });
+  const password = field(formData, "password");
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
     logAuthError("login", error);
     if (error.status !== 429) {
@@ -99,6 +147,14 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
     }
     return answer(page, { error: authErrorCode(error), email });
   }
+  // The new-password check runs again at every login (ADR 0021), only after the password proved
+  // right. It catches passwords set by calling Supabase Auth directly, set before ADR 0019, or
+  // breached since. A flagged session can't use the app until the password is changed.
+  if (await loginNeedsPasswordChange(password)) {
+    if (!(await flagSession(supabase, data.session?.access_token))) return answer(page, { error: GENERIC_ERROR, email });
+    redirect("/reset?error=password-change-required");
+  }
+  await requirePasswordChange(null);
   redirect(next);
 }
 
@@ -128,11 +184,14 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
     if (error.status === 401 || error.code === "session_not_found" || error.code === "no_authorization") {
       return answer("/reset", { error: "reset-expired" });
     }
-    return answer("/reset", { error: authErrorCode(error) });
+    // This page has no email field, so Supabase's validation_failed can't be about an email.
+    const code = authErrorCode(error);
+    return answer("/reset", { error: code === "invalid-email" ? GENERIC_ERROR : code });
   }
   // Supabase Auth ends the account's other sessions on a password change (ASVS 5.0.0 7.4.3;
   // LogoutAllExceptMe in its models/user.go). Their access tokens stay valid until they expire
   // (jwt_expiry, 1 hour) but can't be refreshed. E2E: "a password reset ends ... other sessions".
+  await requirePasswordChange(null);
   redirect("/w?password=changed");
 }
 
@@ -149,20 +208,26 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.verify, true);
   if (limited) return answer(page, { error: limited });
-  const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
+  // An emailed link starts a new session; if this browser's current session is flagged by the login
+  // check, the new one is flagged too, so a link is no way around the change (ADR 0021). As in the
+  // proxy, the flag counts only while it holds the current session's id.
+  const flag = (await cookies()).get(passwordChangeCookieName(isHttps(await headers())))?.value;
+  const current = flag ? (await supabase.auth.getClaims()).data?.claims?.session_id : undefined;
+  const flagged = !!flag && flag === current;
+  const { data, error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
   if (error) {
     logAuthError(`verify-${type}`, error);
     if (error.status === 429) return answer(page, { error: authErrorCode(error) });
+    return answer(page, { error: "link-used" });
+  }
+  // If the new session can't be flagged it has been ended, and the link is used up.
+  if (flagged && !(await flagSession(supabase, data.session?.access_token))) {
     return answer(page, { error: "link-used" });
   }
   redirect(type === "recovery" ? "/reset" : "/w");
 }
 
 export async function logOut(): Promise<void> {
-  const supabase = await createClient();
-  // "local" ends this session (its refresh token is revoked on the server) and leaves the
-  // user's other devices signed in.
-  const { error } = await supabase.auth.signOut({ scope: "local" });
-  if (error) logAuthError("logout", error);
+  await endSession(await createClient());
   redirect("/login?signed_out=1");
 }

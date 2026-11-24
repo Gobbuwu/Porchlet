@@ -39,7 +39,7 @@ export const alertIn = (page: Page) => page.locator('main [role="alert"]');
 // Session cookie names from src/lib/supabase/config.ts.
 export const isAuthCookie = (name: string) => /^(__Host-)?porchlet-auth/.test(name);
 
-type Session = { refresh_token: string; expires_at: number };
+type Session = { access_token: string; refresh_token: string; expires_at: number };
 
 // @supabase/ssr stores the session as "base64-" + base64url(JSON), split into .0, .1, ... when
 // large. Plain-HTTP runs use the bare cookie name.
