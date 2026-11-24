@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AuthForm } from "@/components/auth-form";
 import { PasswordField } from "@/components/fields";
 import { safeNext } from "@/lib/auth/redirect";
+import { formStateFromParams } from "@/lib/auth/types";
 import { logIn } from "../actions";
 
 export const metadata: Metadata = { title: "Log in · Porchlet" };
@@ -14,7 +15,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
     <main className="narrow">
       <h1>Log in</h1>
       {params.signed_out ? <p role="status" className="notice">You are signed out.</p> : null}
-      <AuthForm action={logIn} submitLabel="Log in" withEmail>
+      <AuthForm action={logIn} initialState={formStateFromParams(params)} submitLabel="Log in" withEmail>
         <input type="hidden" name="next" value={next} />
         <PasswordField label="Password" autoComplete="current-password" />
       </AuthForm>

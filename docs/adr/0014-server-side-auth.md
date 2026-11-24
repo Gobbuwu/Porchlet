@@ -45,7 +45,7 @@ Supabase Auth's own limits, measured against the local stack (Supabase CLI 3.1.0
 
 ## Consequences
 
-- Without JavaScript, the forms still post to their Server Actions: login and logout work (E2E test), but an error such as "Wrong email or password." is not shown; the page just reloads. Gap in docs/milestones/M1.md.
+- Without JavaScript, the forms still post to their Server Actions: login and logout work (E2E test). Their messages did not show; [ADR 0018](0018-native-form-posts-redirect-with-message.md) fixes that with a redirect.
 - Next.js rejects a Server Action POST whose `Origin` doesn't match the host (measured: HTTP 500 "Invalid Server Actions request"), which covers the Origin check in threat model row 17 for these forms.
 - **Unverified, to check on the hosted test project before M1 closes:** on hosted Supabase, auth requests now come from the Next.js server's IP. If hosted Auth limits per caller IP, all users of one deployment may share one sign-in budget, and one attacker could use it up. GoTrue can take the real client IP from `Sb-Forwarded-For` when that is enabled; whether hosted projects enable it, and whether a direct caller could spoof it, is not known.
 - M3 uploads can't use the user's token in the browser; they need signed upload URLs created on the server with the user's session (still RLS-gated). To design in M3.

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { confirmEmailLink } from "@/app/(auth)/actions";
 import { AuthForm } from "@/components/auth-form";
+import { formStateFromParams } from "@/lib/auth/types";
 
 export const metadata: Metadata = { title: "Confirm · Porchlet" };
 
@@ -15,7 +16,11 @@ export default async function ConfirmPage({ searchParams }: PageProps<"/auth/con
   return (
     <main className="narrow">
       <h1>{recovery ? "Reset your password" : "Confirm your email"}</h1>
-      <AuthForm action={confirmEmailLink} submitLabel={recovery ? "Continue" : "Confirm email"}>
+      <AuthForm
+        action={confirmEmailLink}
+        initialState={formStateFromParams(params)}
+        submitLabel={recovery ? "Continue" : "Confirm email"}
+      >
         <input type="hidden" name="token_hash" value={tokenHash} />
         <input type="hidden" name="type" value={type} />
       </AuthForm>

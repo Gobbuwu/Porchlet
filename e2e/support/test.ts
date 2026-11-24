@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { test as base } from "@playwright/test";
+import { type Page, test as base } from "@playwright/test";
 
 export { expect } from "@playwright/test";
 
@@ -14,3 +14,14 @@ export const test = base.extend({
     await provide({ ...extraHTTPHeaders, "x-forwarded-for": randomIp() });
   },
 });
+
+// Waits until React has hydrated the page's form, so a click goes through React (a fetch with
+// Next.js's Next-Action header) rather than a native form post. Only tests about that path need
+// it: a form sent before hydration shows its message too (ADR 0018). React keeps its fiber on
+// each hydrated DOM node under a "__reactFiber$" key.
+export async function waitForHydration(page: Page) {
+  await page.waitForFunction(() => {
+    const form = document.querySelector("main form");
+    return !!form && Object.keys(form).some((k) => k.startsWith("__reactFiber$"));
+  });
+}
