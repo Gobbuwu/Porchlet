@@ -65,6 +65,6 @@ export async function newPasswordProblem(
   if (isCommonPassword(password)) return "common-password";
   if (!breachCheckEnabled()) return null;
   const status = await breachStatus(password, fetchImpl);
-  if (status === "unavailable") console.warn("breached-password check unavailable; password accepted");
+  if (status === "unavailable") console.warn("breached-password check unavailable; only the bundled list applied");
   return status === "breached" ? "common-password" : null;
 }

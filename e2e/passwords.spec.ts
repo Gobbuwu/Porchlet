@@ -1,4 +1,5 @@
 import { breachStatus, isCommonPassword, newPasswordProblem } from "../src/lib/auth/password-check";
+import type { BrowserContext } from "@playwright/test";
 import { mailCount } from "./support/mail";
 import { expect, test } from "./support/test";
 import { alertIn, fillLogin, newUser, readSession, signUpAndConfirm, supabaseEnv } from "./support/users";
@@ -52,20 +53,25 @@ test("a password over 72 bytes is refused as too long, not as a bad email", asyn
   expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
 });
 
+// Sets the signed-in user's password by calling Supabase Auth directly, skipping the app's check.
+// "password1234" is in the bundled list, so the login check needs no Pwned Passwords call.
+async function setPasswordDirectly(context: BrowserContext, password: string) {
+  const { url, key } = supabaseEnv();
+  const { access_token } = await readSession(context);
+  const response = await fetch(`${url}/auth/v1/user`, {
+    method: "PUT",
+    headers: { apikey: key, authorization: `Bearer ${access_token}`, "content-type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  expect(response.status, "Supabase Auth takes the password directly").toBe(200);
+}
+
 // The check runs again at every login (ADR 0021). A password set by calling Supabase Auth
 // directly skips the sign-up and reset checks; the next login catches it and the session can't use
 // the app until the password is changed.
 test("a login with a common password set outside the app must change it first", async ({ page, context }) => {
   const user = await signUpAndConfirm(page, "weak-login");
-  const { url, key } = supabaseEnv();
-  const { access_token } = await readSession(context);
-  // "password1234" is in the bundled list, so the login check needs no Pwned Passwords call.
-  const direct = await fetch(`${url}/auth/v1/user`, {
-    method: "PUT",
-    headers: { apikey: key, authorization: `Bearer ${access_token}`, "content-type": "application/json" },
-    body: JSON.stringify({ password: "password1234" }),
-  });
-  expect(direct.status, "Supabase Auth takes the listed password directly").toBe(200);
+  await setPasswordDirectly(context, "password1234");
   await page.getByRole("button", { name: "Log out" }).click();
 
   const REQUIRED =
@@ -76,6 +82,12 @@ test("a login with a common password set outside the app must change it first", 
   // Every app page sends the flagged session back here.
   await page.goto("/w");
   await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  // The flag outlives a browser restart (a session-only cookie would not), belongs to this session
+  // only, and the page offers a way out.
+  const flag = (await context.cookies()).find((c) => c.name === "porchlet-password-change");
+  expect(flag?.expires, "flag cookie is persistent").toBeGreaterThan(Date.now() / 1000 + 86_400);
+  expect(flag?.httpOnly).toBe(true);
+  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
   // The new password is checked as usual.
   await page.getByLabel(/^New password/).fill("password12345");
   await page.getByRole("button", { name: "Save new password" }).click();
@@ -90,6 +102,26 @@ test("a login with a common password set outside the app must change it first", 
   await page.getByRole("button", { name: "Log out" }).click();
   await fillLogin(page, user.email, strong);
   await expect(page).toHaveURL(/\/w$/);
+  expect((await context.cookies()).map((c) => c.name)).not.toContain("porchlet-password-change");
+});
+
+test("a leftover flag cookie from another session doesn't hold up a different sign-in", async ({ page, context }) => {
+  await signUpAndConfirm(page, "stale-flag");
+  const [session] = (await context.cookies()).filter((c) => /^porchlet-auth/.test(c.name));
+  // As if a flagged session had ended without logging out, leaving its cookie behind.
+  await context.addCookies([{ ...session, name: "porchlet-password-change", value: "a-session-that-ended" }]);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/w$/);
+});
+
+test("a flagged session can log out from /reset", async ({ page, context }) => {
+  const user = await signUpAndConfirm(page, "flag-logout");
+  await setPasswordDirectly(context, "password1234");
+  await page.getByRole("button", { name: "Log out" }).click();
+  await fillLogin(page, user.email, "password1234");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page).toHaveURL(/\/login\?signed_out=1$/);
   expect((await context.cookies()).map((c) => c.name)).not.toContain("porchlet-password-change");
 });
 
