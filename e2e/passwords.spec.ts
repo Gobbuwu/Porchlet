@@ -1,6 +1,11 @@
-import { breachStatus, isCommonPassword, newPasswordProblem } from "../src/lib/auth/password-check";
+import {
+  breachStatus,
+  isCommonPassword,
+  loginNeedsPasswordChange,
+  newPasswordProblem,
+} from "../src/lib/auth/password-check";
 import type { BrowserContext } from "@playwright/test";
-import { mailCount } from "./support/mail";
+import { confirmLink, mailCount } from "./support/mail";
 import { expect, test } from "./support/test";
 import { alertIn, fillLogin, newUser, readSession, signUpAndConfirm, supabaseEnv } from "./support/users";
 
@@ -75,7 +80,7 @@ test("a login with a common password set outside the app must change it first", 
   await page.getByRole("button", { name: "Log out" }).click();
 
   const REQUIRED =
-    "The password you logged in with is too common or has appeared in a data breach. Choose a new one to continue.";
+    "The password you logged in with is too short, too common or has appeared in a data breach. Choose a new one to continue.";
   await fillLogin(page, user.email, "password1234");
   await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
   await expect(alertIn(page)).toHaveText(REQUIRED);
@@ -112,6 +117,24 @@ test("a leftover flag cookie from another session doesn't hold up a different si
   await context.addCookies([{ ...session, name: "porchlet-password-change", value: "a-session-that-ended" }]);
   await page.goto("/w");
   await expect(page).toHaveURL(/\/w$/);
+});
+
+test("a reset link doesn't get a flagged session past the change", async ({ page, context }) => {
+  const user = await signUpAndConfirm(page, "flag-reset-link");
+  await setPasswordDirectly(context, "password1234");
+  await page.getByRole("button", { name: "Log out" }).click();
+  await fillLogin(page, user.email, "password1234");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  // Ask for a reset email in the same browser and open its link: a new session starts.
+  await page.goto("/forgot");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  await page.goto(await confirmLink(user.email, /Reset your Porchlet password/, 1));
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page).toHaveURL(/\/reset$/);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
 });
 
 test("a flagged session can log out from /reset", async ({ page, context }) => {
@@ -204,5 +227,11 @@ test.describe("breach lookup", () => {
     expect(await newPasswordProblem("😀".repeat(18), api(""))).toBeNull();
     expect(calls, "72 bytes is checked").toHaveLength(1);
     expect(isCommonPassword("BASKETBALL")).toBe(true);
+    // At login (ADR 0021): a password under the minimum also needs a change, with no lookup.
+    calls.length = 0;
+    expect(await loginNeedsPasswordChange("short1234", api(""))).toBe(true);
+    expect(calls, "a short password needs no API call").toHaveLength(0);
+    expect(await loginNeedsPasswordChange("password1234", api(""))).toBe(true);
+    expect(await loginNeedsPasswordChange("not-in-the-list-1", api(""))).toBe(false);
   });
 });

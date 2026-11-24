@@ -55,6 +55,15 @@ function breachCheckEnabled(): boolean {
   return process.env.BREACHED_PASSWORD_CHECK !== "off";
 }
 
+/**
+ * Whether a password that just signed in must be changed before the app can be used (ADR 0021):
+ * shorter than the minimum (set under an older or looser Supabase setting), or common or breached.
+ */
+export async function loginNeedsPasswordChange(password: string, fetchImpl: Fetch = fetch): Promise<boolean> {
+  if ([...password].length < MIN_LENGTH) return true;
+  return (await newPasswordProblem(password, fetchImpl)) === "common-password";
+}
+
 /** Why the password can't be used, or null when it can. */
 export async function newPasswordProblem(
   password: string,

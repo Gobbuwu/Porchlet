@@ -16,7 +16,9 @@ import {
 // 3. Sends signed-out visitors from protected pages to /login, and signed-in ones away from
 //    /login and /signup. This is for convenience only: RLS is what protects data (ADR 0004).
 // 4. Sends a session that logged in with a common or breached password from protected pages to
-//    /reset until the password is changed (ADR 0021).
+//    /reset until the password is changed (ADR 0021). This gates pages only: Server Actions can
+//    be posted to any path, so an action that works on users' data must not rely on it (RLS
+//    decides what a session can read or change).
 
 const PROTECTED = ["/w", "/settings"];
 const SIGNED_OUT_ONLY = ["/login", "/signup"];
