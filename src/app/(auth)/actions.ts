@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
+import { newPasswordProblem } from "@/lib/auth/password-check";
 import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
 import type { FormState } from "@/lib/auth/types";
@@ -63,10 +64,11 @@ export async function signUp(_state: FormState, formData: FormData): Promise<For
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.signUp, true);
   if (limited) return answer("/signup", { error: limited, email });
-  const { error } = await supabase.auth.signUp({
-    email,
-    password: field(formData, "password"),
-  });
+  const password = field(formData, "password");
+  // Checked before Supabase sees the email, so the answer is the same for every address.
+  const problem = await newPasswordProblem(password);
+  if (problem) return answer("/signup", { error: problem, email });
+  const { error } = await supabase.auth.signUp({ email, password });
   // Same answer whether or not the email already has an account. Supabase Auth itself answers
   // 422 user_already_exists for a confirmed address (measured, ADR 0014), so the page hides it.
   if (error && error.code !== "user_already_exists") {
@@ -117,7 +119,10 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.newPassword, true);
   if (limited) return answer("/reset", { error: limited });
-  const { error } = await supabase.auth.updateUser({ password: field(formData, "password") });
+  const password = field(formData, "password");
+  const problem = await newPasswordProblem(password);
+  if (problem) return answer("/reset", { error: problem });
+  const { error } = await supabase.auth.updateUser({ password });
   if (error) {
     logAuthError("reset-update", error);
     if (error.status === 401 || error.code === "session_not_found" || error.code === "no_authorization") {
