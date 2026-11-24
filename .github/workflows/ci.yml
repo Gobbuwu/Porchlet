@@ -164,6 +164,10 @@ jobs:
           scripts/ci/in-playwright-image.sh sh -c 'echo "Playwright image: $0"; echo "Node in image: $(node --version)"; ls /ms-playwright' "$PLAYWRIGHT_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Point the app at local Supabase
         run: scripts/e2e/write-env.sh
+      # Supabase Auth itself must honour the session limits (ADR 0020); browser-independent.
+      - name: Session limits against the real Auth server
+        if: matrix.browser == 'chromium'
+        run: scripts/ci/session-limit-check.sh
       # Built and served inside the image too, so the app under test runs on one Node (the image's).
       - name: Build (in the Playwright image)
         run: scripts/ci/in-playwright-image.sh npm run build

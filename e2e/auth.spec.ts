@@ -126,6 +126,13 @@ test("password reset by email", async ({ page, context }) => {
   await page.getByRole("button", { name: "Save new password" }).click();
   await expect(alertIn(page)).toHaveText("Choose a longer password: at least 10 characters.");
 
+  // A common password is refused too (ADR 0019), and the reset session survives it.
+  await page.getByLabel(/^New password/).fill("basketball");
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(alertIn(page)).toHaveText(
+    "Choose a different password: this one is too common or has appeared in a data breach.",
+  );
+
   const newPassword = `${user.password}-new`;
   await page.getByLabel(/^New password/).fill(newPassword);
   await page.getByRole("button", { name: "Save new password" }).click();
