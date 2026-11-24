@@ -13,9 +13,14 @@ const COMMON = new Set(COMMON_PASSWORDS);
 
 export const HIBP_RANGE_URL = "https://api.pwnedpasswords.com/range/";
 const HIBP_TIMEOUT_MS = 2000;
-// supabase/config.toml minimum_password_length. Shorter passwords are left to Supabase Auth, which
-// refuses them with weak_password, so the user is told the length rule rather than this one.
+// supabase/config.toml minimum_password_length, in characters (code points), as Supabase Auth
+// counts it (ADR 0021). Shorter passwords are left to Supabase Auth, which refuses them with
+// weak_password, so the user is told the length rule rather than this one.
 const MIN_LENGTH = 10;
+// Supabase Auth's maximum, in UTF-8 bytes (bcrypt's limit). Supabase refuses longer passwords with
+// validation_failed, the code it also uses for a bad email, so Porchlet checks this itself to give
+// the right message (ADR 0021). The field's maxlength counts UTF-16 units, so it can't.
+const MAX_BYTES = 72;
 
 export type BreachResult = "breached" | "not-found" | "unavailable";
 type Fetch = typeof fetch;
@@ -54,7 +59,8 @@ function breachCheckEnabled(): boolean {
 export async function newPasswordProblem(
   password: string,
   fetchImpl: Fetch = fetch,
-): Promise<"common-password" | null> {
+): Promise<"common-password" | "password-too-long" | null> {
+  if (Buffer.byteLength(password, "utf8") > MAX_BYTES) return "password-too-long";
   if ([...password].length < MIN_LENGTH) return null;
   if (isCommonPassword(password)) return "common-password";
   if (!breachCheckEnabled()) return null;

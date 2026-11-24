@@ -128,7 +128,9 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
     if (error.status === 401 || error.code === "session_not_found" || error.code === "no_authorization") {
       return answer("/reset", { error: "reset-expired" });
     }
-    return answer("/reset", { error: authErrorCode(error) });
+    // This page has no email field, so Supabase's validation_failed can't be about an email.
+    const code = authErrorCode(error);
+    return answer("/reset", { error: code === "invalid-email" ? GENERIC_ERROR : code });
   }
   // Supabase Auth ends the account's other sessions on a password change (ASVS 5.0.0 7.4.3;
   // LogoutAllExceptMe in its models/user.go). Their access tokens stay valid until they expire

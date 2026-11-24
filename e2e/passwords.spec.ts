@@ -33,10 +33,36 @@ test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }
   expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
 });
 
+// Supabase's maximum is 72 bytes, and it refuses longer passwords with the code it uses for a bad
+// email, so Porchlet checks the length itself (ADR 0021). 19 emoji are 76 bytes but only 38 UTF-16
+// units, so they pass the field's maxlength of 72.
+test("a password over 72 bytes is refused as too long, not as a bad email", async ({ page }) => {
+  const user = newUser("long-multibyte");
+  await page.goto("/signup");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel(/^Password/).fill("😀".repeat(19));
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(alertIn(page)).toHaveText(
+    "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
+  );
+  expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
+});
+
 // The breach lookup itself, with a stand-in for the Pwned Passwords API (no browser needed, so it
 // runs once, in the chromium project). SHA-1("password1234") is E6B6A + FBD6D76BB5D2041542D7D2E3FAC5BB05593.
 test.describe("breach lookup", () => {
   test.skip(({ browserName }) => browserName !== "chromium", "plain Node code: one browser is enough");
+
+  // newPasswordProblem reads BREACHED_PASSWORD_CHECK; these tests need the lookup on, even when
+  // the runner's environment turns it off (as .env.example allows for hosts without internet).
+  const saved = process.env.BREACHED_PASSWORD_CHECK;
+  test.beforeEach(() => {
+    delete process.env.BREACHED_PASSWORD_CHECK;
+  });
+  test.afterEach(() => {
+    if (saved === undefined) delete process.env.BREACHED_PASSWORD_CHECK;
+    else process.env.BREACHED_PASSWORD_CHECK = saved;
+  });
 
   const SUFFIX = "FBD6D76BB5D2041542D7D2E3FAC5BB05593";
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -93,6 +119,13 @@ test.describe("breach lookup", () => {
     expect(calls, "9 characters (18 bytes) is short: no API call").toHaveLength(0);
     await newPasswordProblem("é".repeat(10), api(""));
     expect(calls, "10 characters is checked").toHaveLength(1);
+    // Over 72 bytes (Supabase's maximum) is refused before any lookup; 72 bytes is checked.
+    calls.length = 0;
+    expect(await newPasswordProblem("x".repeat(73), api(""))).toBe("password-too-long");
+    expect(await newPasswordProblem("😀".repeat(19), api(""))).toBe("password-too-long");
+    expect(calls, "too long: no API call").toHaveLength(0);
+    expect(await newPasswordProblem("😀".repeat(18), api(""))).toBeNull();
+    expect(calls, "72 bytes is checked").toHaveLength(1);
     expect(isCommonPassword("BASKETBALL")).toBe(true);
   });
 });
