@@ -9,3 +9,12 @@ id = "supabase-secret-key"
 description = "Supabase secret API key (sb_secret_...), which bypasses RLS"
 regex = '''sb_secret_[A-Za-z0-9_-]{20,}'''
 keywords = ["sb_secret_"]
+
+# The bundled common-password list (ADR 0019) is public data, not secrets: the NCSC top 100k via
+# SecLists, rebuilt only by scripts/auth/build-common-passwords.sh from a pinned commit checked by
+# SHA-256. Its lines trip the generic-api-key rule (e.g. an entry containing "password" followed by
+# a random-looking entry on the next line). Only this exact path is skipped; any other file that
+# holds such strings is still scanned.
+[[allowlists]]
+description = "Generated common-password list (ADR 0019)"
+paths = ['''^src/lib/auth/common-passwords\.ts$''']

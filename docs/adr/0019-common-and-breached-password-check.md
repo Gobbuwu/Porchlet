@@ -32,5 +32,7 @@ Option 4, in `src/lib/auth/password-check.ts`, called by the sign-up and new-pas
 
 - Every sign-up and password change makes one outbound call to Have I Been Pwned, carrying 5 hex characters of the password's SHA-1. The privacy policy must say so (to do with the policy).
 - Passwords already in use are not checked; users meet the check at their next change.
+- gitleaks skips `src/lib/auth/common-passwords.ts` (exact path, `.gitleaks.toml`): three of its lines tripped the generic-api-key rule on the PR's first CI run. The file only changes through the build script, so a change to it in a diff is a change to that script's output.
+- CodeQL's password-hashing rule flags SHA-1 on a password. Here SHA-1 is the Pwned Passwords protocol, not storage (Supabase stores bcrypt), and only 5 hex characters leave the server; the alert is dismissed as a false positive with this reason.
 - The list is a snapshot. Re-run the script with a newer SecLists commit to refresh it.
 - Tests: `e2e/passwords.spec.ts` (sign-up refused with no email sent; the API client against a stand-in: prefix only, padding, case, errors, timeout) and the reset test in `e2e/auth.spec.ts`.
