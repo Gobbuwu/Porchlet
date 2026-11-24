@@ -2,9 +2,10 @@ import { expect, test, type Page, type Response } from "@playwright/test";
 
 // Security headers from next.config.ts (reasons in docs/adr/0013-security-headers.md).
 // The values are written out here on purpose: a change to a header must change this file too.
+// The CSP is checked separately: pages get src/proxy.ts's nonce policy (e2e/csp.spec.ts checks
+// its directives), and paths the proxy skips get frame-ancestors only from next.config.ts.
 const expected: Record<string, string> = {
   "strict-transport-security": "max-age=63072000; includeSubDomains",
-  "content-security-policy": "frame-ancestors 'none'",
   "x-frame-options": "DENY",
   "x-content-type-options": "nosniff",
   "referrer-policy": "same-origin",
@@ -21,6 +22,17 @@ async function expectSecurityHeaders(response: Response | null, what: string) {
     expect(headers[name], `${what}: ${name}`).toBe(value);
   }
   expect(headers["x-powered-by"], `${what}: x-powered-by`).toBeUndefined();
+  // Exactly one policy, and it forbids framing. A second policy would show as a second
+  // frame-ancestors once the header values are joined.
+  const csp = headers["content-security-policy"] ?? "";
+  expect(csp.match(/frame-ancestors/g)?.length, `${what}: one CSP with frame-ancestors`).toBe(1);
+  expect(csp, `${what}: frame-ancestors`).toContain("frame-ancestors 'none'");
+  const proxySkipped = /^\/(?:_next\/static\/.+|_next\/image|favicon\.ico)$/.test(new URL(response!.url()).pathname);
+  if (proxySkipped) {
+    expect(csp, `${what}: frame-only CSP`).toBe("frame-ancestors 'none'");
+  } else {
+    expect(csp, `${what}: nonce CSP from the proxy`).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+'/);
+  }
 }
 
 async function gotoAndCheck(page: Page, path: string, status: number) {

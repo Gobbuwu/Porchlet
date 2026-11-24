@@ -15,11 +15,13 @@ Needs Node 22 or later and Docker.
 ```sh
 npm ci
 npm run db:start              # local Supabase in Docker; prints local URLs and keys
-cp .env.example .env.local    # then paste the local publishable key
+scripts/e2e/write-env.sh      # writes .env.local with the local URL and publishable key
 npm run dev
 ```
 
-Checks: `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:db` (pgTAP, needs `db:start`) and `npm run test:e2e` (Playwright; run `npx playwright install` once). CI runs these and more on every PR; see [.github/workflows/ci.yml](.github/workflows/ci.yml) and [ADR 0012](docs/adr/0012-ci-pipeline.md).
+Emails (sign-up confirmation, password reset) go to the local mail catcher at http://127.0.0.1:54324.
+
+Checks: `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:db` (pgTAP, needs `db:start`) and `npm run test:e2e` (Playwright; needs `db:start` and `.env.local`, then `npm run build`; run `npx playwright install` once). CI runs these and more on every PR; see [.github/workflows/ci.yml](.github/workflows/ci.yml) and [ADR 0012](docs/adr/0012-ci-pipeline.md).
 
 ## Docs
 

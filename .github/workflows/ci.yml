@@ -153,14 +153,25 @@ jobs:
       - run: npm ci
       - name: Pull the Playwright image
         run: docker pull "$PLAYWRIGHT_IMAGE"
+      # Auth E2E runs against a local Supabase stack and its mail catcher (Mailpit). Services
+      # the app doesn't use yet are left out to save time; storage joins in M3.
+      - name: Start local Supabase (auth, REST, Mailpit)
+        run: npx supabase start -x realtime,storage-api,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
       - name: Record versions
         run: |
+          npx supabase --version
+          docker ps --format '{{.Image}}' | sort | tee -a "$GITHUB_STEP_SUMMARY"
           scripts/ci/in-playwright-image.sh sh -c 'echo "Playwright image: $0"; echo "Node in image: $(node --version)"; ls /ms-playwright' "$PLAYWRIGHT_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Point the app at local Supabase
+        run: scripts/e2e/write-env.sh
       # Built and served inside the image too, so the app under test runs on one Node (the image's).
       - name: Build (in the Playwright image)
         run: scripts/ci/in-playwright-image.sh npm run build
       - name: Playwright
         run: scripts/ci/in-playwright-image.sh npx playwright test --project=${{ matrix.browser }}
+      - name: Auth container log (on failure)
+        if: failure()
+        run: docker logs supabase_auth_porchlet 2>&1 | tail -n 200
 
   secrets:
     name: Secret scan
