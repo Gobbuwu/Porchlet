@@ -15,5 +15,6 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0014](0014-server-side-auth.md) | Auth on the server, HttpOnly session cookies, nonce CSP | Proposed (M1 auth PR) |
 | [0015](0015-own-auth-rate-limiter.md) | Porchlet counts auth attempts per visitor IP in Postgres | Proposed (M1 auth PR) |
 | [0016](0016-held-back-dependency-majors.md) | Hold back @types/node and TypeScript majors; take ESLint 10 | Accepted |
+| [0017](0017-rls-on-private-tables.md) | Row level security on every private table, with no policies | Accepted |
 
 ADRs 0006-0010 are written when their milestone starts (see the M0 doc).

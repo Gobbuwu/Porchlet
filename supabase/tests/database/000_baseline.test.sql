@@ -1,15 +1,16 @@
 -- Baseline checks that every later migration must keep passing.
--- Covers: private.instance
+-- Covers: private.instance, private.rate_limit_hits, private.rate_limit_key
 begin;
-select plan(17);
+select plan(25);
 
 -- 1-3. Nothing in the API schemas is open by default.
+-- private is included as defence in depth (migration 20261124000000_private_rls.sql).
 select is_empty(
   $$ select c.oid::regclass::text
        from pg_class c join pg_namespace n on n.oid = c.relnamespace
-      where n.nspname in ('public', 'graphql_public') and c.relkind in ('r', 'p')
+      where n.nspname in ('public', 'graphql_public', 'private') and c.relkind in ('r', 'p')
         and not c.relrowsecurity $$,
-  'every table in public and graphql_public has row level security on');
+  'every table in public, graphql_public and private has row level security on');
 
 select is_empty(
   $$ select c.oid::regclass::text || ' to ' || r.rolname
@@ -62,6 +63,45 @@ select is(current_user::text, 'postgres',
 -- 17. pgTAP still works after switching to an API role (M2's policy tests rely on this).
 set local role authenticated;
 select ok(true, 'pgTAP functions run as authenticated');
+reset role;
+
+-- 18-25. RLS on private tables, with no policies, is a lock behind the missing grants.
+-- No policy may exist: a policy here would open rows to whoever a later grant reaches.
+select is_empty(
+  $$ select schemaname || '.' || tablename || ' ' || policyname from pg_policies where schemaname = 'private' $$,
+  'no table in private has a policy');
+
+-- The security definer functions run as postgres. They keep working because postgres owns the
+-- tables and has BYPASSRLS, and no private table forces RLS on its owner.
+select ok((select rolbypassrls from pg_roles where rolname = 'postgres'), 'postgres has BYPASSRLS');
+select is_empty(
+  $$ select c.oid::regclass::text || ' owned by ' || pg_get_userbyid(c.relowner)
+       from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'private' and c.relkind in ('r', 'p')
+        and (pg_get_userbyid(c.relowner) <> 'postgres' or c.relforcerowsecurity) $$,
+  'every private table is owned by postgres and does not force RLS');
+
+-- Simulate the mistake RLS guards against: grant authenticated the schema and the tables (rolled
+-- back with the transaction), then check it still sees and writes nothing. Each table gets a row
+-- first so that "sees nothing" means RLS hid it.
+insert into private.rate_limit_hits (bucket) values ('baseline|probe');
+delete from private.rate_limit_key;
+insert into private.rate_limit_key (key_hash) values (extensions.digest('baseline-probe', 'sha256'));
+grant usage on schema private to authenticated;
+grant select, insert, update, delete on private.instance, private.rate_limit_hits, private.rate_limit_key
+  to authenticated;
+
+set local role authenticated;
+select is((select count(*)::int from private.instance), 0,
+  'with a mistaken grant, authenticated still reads no private.instance row');
+select is((select count(*)::int from private.rate_limit_hits), 0,
+  'with a mistaken grant, authenticated still reads no private.rate_limit_hits row');
+select is((select count(*)::int from private.rate_limit_key), 0,
+  'with a mistaken grant, authenticated still reads no private.rate_limit_key row');
+select throws_ok($$ insert into private.rate_limit_hits (bucket) values ('forged') $$, '42501', null,
+  'with a mistaken grant, authenticated still cannot insert into private.rate_limit_hits');
+select is_empty($$ update private.instance set setup_completed_at = now() returning id $$,
+  'with a mistaken grant, authenticated still cannot update private.instance');
 reset role;
 
 select * from finish();
