@@ -26,7 +26,9 @@ export default defineConfig({
         // Form history off: in Playwright's headless Firefox, once an email is saved (typed and
         // sent earlier in the same test), a click on the submit button sometimes loses its mouse
         // press and the form is never sent. Measured: 20 of 450 clicks lost with the default, 0 of
-        // 450 with this pref; visible Firefox and Mozilla's own Firefox lost none (M1.md).
+        // 450 with this pref; visible Firefox and Mozilla's own Firefox lost none (M1.md). A bug in
+        // Playwright's headless Firefox, not reported upstream: on each Playwright bump, re-run the
+        // same-email tests without this pref and drop it once they pass.
         launchOptions: { firefoxUserPrefs: { "browser.formfill.enable": false } },
       },
     },
