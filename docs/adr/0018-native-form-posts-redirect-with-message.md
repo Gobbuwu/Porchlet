@@ -6,7 +6,7 @@
 
 The auth forms (log in, sign up, reset request, new password, email link) post to Server Actions and show the result with React's `useActionState`. A form is sent as a native HTML form post, not through React, when the page has not hydrated yet (a slow device or connection, or a quick click) or when JavaScript is off.
 
-Found while landing the Dependabot PRs: a native post ran its action, but the page that came back showed no message, on the server render and after it hydrated. The Firefox E2E run on PR 4 flaked on it (`password reset by email`, [job](https://github.com/Gobbuwu/porchlet/actions/runs/45296124667/job/138116841874)). [ADR 0014](0014-server-side-auth.md) and M1.md already listed "without JavaScript, form errors don't show" as a gap; it is the same bug.
+Found while landing the Dependabot PRs: a native post ran its action, but the page that came back showed no message, on the server render and after it hydrated. A Firefox E2E failure on PR 4 (`password reset by email`, [job](https://github.com/Gobbuwu/porchlet/actions/runs/45296124667/job/138116841874)) was put down to it. Correction (2026-11-24): that test also types the same email twice, which in Playwright's headless Firefox can lose the submit click (M1.md, "Firefox: clicks lost to saved form history"), so either cause fits (unverified). [ADR 0014](0014-server-side-auth.md) and M1.md already listed "without JavaScript, form errors don't show" as a gap; it is the same bug.
 
 Root cause, measured on 2026-11-24 with Next.js 16.4.6, React 19.3.1, `next start` and local Supabase:
 

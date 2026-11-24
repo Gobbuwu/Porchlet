@@ -19,7 +19,17 @@ export default defineConfig({
         ...(chromiumPath ? { launchOptions: { executablePath: chromiumPath } } : {}),
       },
     },
-    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
+    {
+      name: "firefox",
+      use: {
+        ...devices["Desktop Firefox"],
+        // Form history off: in Playwright's headless Firefox, once an email is saved (typed and
+        // sent earlier in the same test), a click on the submit button sometimes loses its mouse
+        // press and the form is never sent. Measured: 20 of 450 clicks lost with the default, 0 of
+        // 450 with this pref; visible Firefox and Mozilla's own Firefox lost none (M1.md).
+        launchOptions: { firefoxUserPrefs: { "browser.formfill.enable": false } },
+      },
+    },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
   ],
   webServer: {
