@@ -10,6 +10,16 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    # Majors held back on purpose (ADR 0016). Remove a rule when its reason no longer holds.
+    ignore:
+      # @types/node follows the lowest Node we support (package.json engines, Node 22). Newer
+      # types accept APIs that don't exist on Node 22. Raise it together with engines.node.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # typescript-eslint (8.73.0 here, 8.74.0 latest) supports TypeScript ">=4.8.4
+      # <6.1.0" and refuses to load on TypeScript 7. Lift this when it supports 7.
+      - dependency-name: "typescript"
+        versions: [">=6.1.0"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
