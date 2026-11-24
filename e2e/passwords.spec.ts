@@ -24,9 +24,8 @@ test("sign-up with a common password is refused before an account is made", asyn
   expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
 });
 
-// Porchlet leaves passwords under 10 characters to Supabase Auth, so both must count the same
-// way: in characters (code points). Supabase does (measured with GoTrue v2.198.0); if an upgrade
-// counted bytes, a short multi-byte password would be accepted without Porchlet's check.
+// The minimum counts characters (code points), in Porchlet and in Supabase Auth (measured with
+// GoTrue v2.198.0); counting bytes would let a short multi-byte password through (ADR 0021).
 // 5 emoji are 5 characters, 20 bytes and 10 UTF-16 units. Browsers count the field's minlength
 // differently, so the browser check is turned off and the server decides.
 test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }) => {
@@ -111,10 +110,21 @@ test("a login with a common password set outside the app must change it first", 
 });
 
 test("a leftover flag cookie from another session doesn't hold up a different sign-in", async ({ page, context }) => {
-  await signUpAndConfirm(page, "stale-flag");
+  const user = await signUpAndConfirm(page, "stale-flag");
   const [session] = (await context.cookies()).filter((c) => /^porchlet-auth/.test(c.name));
   // As if a flagged session had ended without logging out, leaving its cookie behind.
   await context.addCookies([{ ...session, name: "porchlet-password-change", value: "a-session-that-ended" }]);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/w$/);
+  // Nor does it flag the session a reset link starts.
+  await page.goto("/forgot");
+  await page.getByLabel("Email").fill(user.email);
+  const before = await mailCount(user.email);
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  await page.goto(await confirmLink(user.email, /Reset your Porchlet password/, before));
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page).toHaveURL(/\/reset$/);
   await page.goto("/w");
   await expect(page).toHaveURL(/\/w$/);
 });
@@ -128,9 +138,10 @@ test("a reset link doesn't get a flagged session past the change", async ({ page
   // Ask for a reset email in the same browser and open its link: a new session starts.
   await page.goto("/forgot");
   await page.getByLabel("Email").fill(user.email);
+  const before = await mailCount(user.email);
   await page.getByRole("button", { name: "Send reset link" }).click();
   await expect(page.getByRole("status")).toBeVisible();
-  await page.goto(await confirmLink(user.email, /Reset your Porchlet password/, 1));
+  await page.goto(await confirmLink(user.email, /Reset your Porchlet password/, before));
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page).toHaveURL(/\/reset$/);
   await page.goto("/w");
@@ -201,7 +212,7 @@ test.describe("breach lookup", () => {
     expect(await breachStatus("password1234", hang)).toBe("unavailable");
   });
 
-  test("newPasswordProblem: list first, then the API; unavailable accepts; short is left to Supabase", async () => {
+  test("newPasswordProblem: length, then the list, then the API; unavailable accepts", async () => {
     // "not-in-the-list-1" is not in the bundled list; its SHA-1 is F7C93 + the suffix below.
     const other = "A02E31A059F04DE0F44292982624D4C5ADA";
     calls.length = 0;
@@ -211,11 +222,11 @@ test.describe("breach lookup", () => {
     expect(calls[0].url).toBe("https://api.pwnedpasswords.com/range/F7C93");
     expect(await newPasswordProblem("not-in-the-list-1", api("", 500))).toBeNull();
     expect(await newPasswordProblem("not-in-the-list-1", api(`${other}:0`))).toBeNull();
-    expect(await newPasswordProblem("short", api(`${SUFFIX}:7`))).toBeNull();
+    expect(await newPasswordProblem("short", api(`${SUFFIX}:7`))).toBe("weak-password");
     // Length is counted in characters (code points), as Supabase Auth counts it (ADR 0021):
-    // 9 two-byte characters are short and left to Supabase; 10 are checked.
+    // 9 two-byte characters are too short, with no lookup; 10 are checked.
     calls.length = 0;
-    expect(await newPasswordProblem("é".repeat(9), api(""))).toBeNull();
+    expect(await newPasswordProblem("é".repeat(9), api(""))).toBe("weak-password");
     expect(calls, "9 characters (18 bytes) is short: no API call").toHaveLength(0);
     await newPasswordProblem("é".repeat(10), api(""));
     expect(calls, "10 characters is checked").toHaveLength(1);

@@ -208,17 +208,21 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   const supabase = await createClient();
   const limited = await limitError(supabase, RULES.verify, true);
   if (limited) return answer(page, { error: limited });
-  // A reset link starts a new session; if this browser's session was flagged by the login check,
-  // the new one is flagged too, so a reset link is no way around the change (ADR 0021).
-  const flagged = (await cookies()).has(passwordChangeCookieName(isHttps(await headers())));
+  // An emailed link starts a new session; if this browser's current session is flagged by the login
+  // check, the new one is flagged too, so a link is no way around the change (ADR 0021). As in the
+  // proxy, the flag counts only while it holds the current session's id.
+  const flag = (await cookies()).get(passwordChangeCookieName(isHttps(await headers())))?.value;
+  const current = flag ? (await supabase.auth.getClaims()).data?.claims?.session_id : undefined;
+  const flagged = !!flag && flag === current;
   const { data, error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
   if (error) {
     logAuthError(`verify-${type}`, error);
     if (error.status === 429) return answer(page, { error: authErrorCode(error) });
     return answer(page, { error: "link-used" });
   }
-  if (flagged && type === "recovery" && !(await flagSession(supabase, data.session?.access_token))) {
-    return answer(page, { error: GENERIC_ERROR });
+  // If the new session can't be flagged it has been ended, and the link is used up.
+  if (flagged && !(await flagSession(supabase, data.session?.access_token))) {
+    return answer(page, { error: "link-used" });
   }
   redirect(type === "recovery" ? "/reset" : "/w");
 }
