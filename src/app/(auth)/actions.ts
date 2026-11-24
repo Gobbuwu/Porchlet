@@ -1,12 +1,14 @@
 "use server";
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
 import { newPasswordProblem } from "@/lib/auth/password-check";
 import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
 import type { FormState } from "@/lib/auth/types";
+import { isHttps } from "@/lib/http";
+import { hardenCookie, passwordChangeCookieName } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
 
 // Auth runs here, on the server, so the session cookie can be HttpOnly (ADR 0014).
@@ -54,6 +56,16 @@ async function limitError(
   return null;
 }
 
+// Sets or clears the cookie that sends this browser's app pages to /reset (ADR 0021). Cleared with
+// the same attributes it was set with, which a __Host- cookie needs.
+async function requirePasswordChange(required: boolean) {
+  const secure = isHttps(await headers());
+  (await cookies()).set(passwordChangeCookieName(secure), required ? "1" : "", {
+    ...hardenCookie({}, secure),
+    ...(required ? {} : { maxAge: 0 }),
+  });
+}
+
 function logAuthError(action: string, error: { status?: number; code?: string }) {
   // Status and code only: never the email or the password.
   console.warn(`auth ${action} failed: status=${error.status} code=${error.code}`);
@@ -87,10 +99,8 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
   const rules = RULES.loginFailures(email);
   const limited = await limitError(supabase, rules, false);
   if (limited) return answer(page, { error: limited, email });
-  const { error } = await supabase.auth.signInWithPassword({
-    email,
-    password: field(formData, "password"),
-  });
+  const password = field(formData, "password");
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
     logAuthError("login", error);
     if (error.status !== 429) {
@@ -99,6 +109,14 @@ export async function logIn(_state: FormState, formData: FormData): Promise<Form
     }
     return answer(page, { error: authErrorCode(error), email });
   }
+  // The new-password check runs again at every login (ADR 0021), only after the password proved
+  // right. It catches passwords set by calling Supabase Auth directly, set before ADR 0019, or
+  // breached since. A flagged session can't use the app until the password is changed.
+  if ((await newPasswordProblem(password)) === "common-password") {
+    await requirePasswordChange(true);
+    redirect("/reset?error=password-change-required");
+  }
+  await requirePasswordChange(false);
   redirect(next);
 }
 
@@ -135,6 +153,7 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
   // Supabase Auth ends the account's other sessions on a password change (ASVS 5.0.0 7.4.3;
   // LogoutAllExceptMe in its models/user.go). Their access tokens stay valid until they expire
   // (jwt_expiry, 1 hour) but can't be refreshed. E2E: "a password reset ends ... other sessions".
+  await requirePasswordChange(false);
   redirect("/w?password=changed");
 }
 
@@ -166,5 +185,6 @@ export async function logOut(): Promise<void> {
   // user's other devices signed in.
   const { error } = await supabase.auth.signOut({ scope: "local" });
   if (error) logAuthError("logout", error);
+  await requirePasswordChange(false);
   redirect("/login?signed_out=1");
 }

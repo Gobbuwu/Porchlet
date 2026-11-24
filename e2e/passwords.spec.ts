@@ -1,7 +1,7 @@
 import { breachStatus, isCommonPassword, newPasswordProblem } from "../src/lib/auth/password-check";
 import { mailCount } from "./support/mail";
 import { expect, test } from "./support/test";
-import { alertIn, newUser } from "./support/users";
+import { alertIn, fillLogin, newUser, readSession, signUpAndConfirm, supabaseEnv } from "./support/users";
 
 // New passwords are checked against common and breached passwords (ADR 0019).
 
@@ -50,6 +50,47 @@ test("a password over 72 bytes is refused as too long, not as a bad email", asyn
     "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
   );
   expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
+});
+
+// The check runs again at every login (ADR 0021). A password set by calling Supabase Auth
+// directly skips the sign-up and reset checks; the next login catches it and the session can't use
+// the app until the password is changed.
+test("a login with a common password set outside the app must change it first", async ({ page, context }) => {
+  const user = await signUpAndConfirm(page, "weak-login");
+  const { url, key } = supabaseEnv();
+  const { access_token } = await readSession(context);
+  // "password1234" is in the bundled list, so the login check needs no Pwned Passwords call.
+  const direct = await fetch(`${url}/auth/v1/user`, {
+    method: "PUT",
+    headers: { apikey: key, authorization: `Bearer ${access_token}`, "content-type": "application/json" },
+    body: JSON.stringify({ password: "password1234" }),
+  });
+  expect(direct.status, "Supabase Auth takes the listed password directly").toBe(200);
+  await page.getByRole("button", { name: "Log out" }).click();
+
+  const REQUIRED =
+    "The password you logged in with is too common or has appeared in a data breach. Choose a new one to continue.";
+  await fillLogin(page, user.email, "password1234");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  await expect(alertIn(page)).toHaveText(REQUIRED);
+  // Every app page sends the flagged session back here.
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  // The new password is checked as usual.
+  await page.getByLabel(/^New password/).fill("password12345");
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(alertIn(page)).toHaveText(COMMON_MESSAGE);
+
+  const strong = `${user.password}-new`;
+  await page.getByLabel(/^New password/).fill(strong);
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(page).toHaveURL(/\/w\?password=changed$/);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/w$/);
+  await page.getByRole("button", { name: "Log out" }).click();
+  await fillLogin(page, user.email, strong);
+  await expect(page).toHaveURL(/\/w$/);
+  expect((await context.cookies()).map((c) => c.name)).not.toContain("porchlet-password-change");
 });
 
 // The breach lookup itself, with a stand-in for the Pwned Passwords API (no browser needed, so it

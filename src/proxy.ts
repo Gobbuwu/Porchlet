@@ -2,13 +2,21 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { contentSecurityPolicy, newNonce } from "@/lib/csp";
 import { isHttps } from "@/lib/http";
-import { authCookieOptions, hardenCookie, isAuthCookie, supabaseEnv } from "@/lib/supabase/config";
+import {
+  authCookieOptions,
+  hardenCookie,
+  isAuthCookie,
+  passwordChangeCookieName,
+  supabaseEnv,
+} from "@/lib/supabase/config";
 
 // Runs before every page and route (design doc section 2, ADR 0014):
 // 1. A Content-Security-Policy with a fresh nonce.
 // 2. Refreshes the Supabase session cookie when the access token has expired.
 // 3. Sends signed-out visitors from protected pages to /login, and signed-in ones away from
 //    /login and /signup. This is for convenience only: RLS is what protects data (ADR 0004).
+// 4. Sends a session that logged in with a common or breached password from protected pages to
+//    /reset until the password is changed (ADR 0021).
 
 const PROTECTED = ["/w", "/settings"];
 const SIGNED_OUT_ONLY = ["/login", "/signup"];
@@ -53,6 +61,8 @@ export async function proxy(request: NextRequest) {
     const login = new URL("/login", request.url);
     login.searchParams.set("next", path + request.nextUrl.search);
     response = NextResponse.redirect(login);
+  } else if (signedIn && under(path, PROTECTED) && request.cookies.has(passwordChangeCookieName(https))) {
+    response = NextResponse.redirect(new URL("/reset?error=password-change-required", request.url));
   } else if (signedIn && under(path, SIGNED_OUT_ONLY)) {
     response = NextResponse.redirect(new URL("/w", request.url));
   } else {

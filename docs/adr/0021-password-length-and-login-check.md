@@ -1,4 +1,4 @@
-# 0021. Password length is checked like Supabase counts it; direct Supabase Auth calls are an accepted gap
+# 0021. Password length is checked like Supabase counts it; passwords are checked again at every login
 
 - Status: Accepted (2026-11-24, M1). Adds to [ADR 0019](0019-common-and-breached-password-check.md); does not change its decision.
 
@@ -52,12 +52,24 @@ Options, measured or sourced on 2026-11-24:
 | An auth hook | Nothing | No hook gets the new password. Password Verification Attempt is Teams and Enterprise only and gets `user_id` and `valid`; Before User Created (free) gets the user record without the password | [auth hooks docs](https://supabase.com/docs/guides/auth/auth-hooks) |
 | `password_requirements` (character classes) | Nothing | Composition rules, which ASVS 6.2.5 says not to use; even the strictest setting (lower, upper, digit, symbol) lets `Password123!` through | ASVS 5.0.0 6.2.5 |
 | Turn off public sign-up, create accounts with the secret key on the server | Sign-up only | Puts the secret key on the sign-up path (ADR 0005 keeps it to two routes), Porchlet would have to send confirmation emails itself, and password change stays open | ADR 0005 |
-| Check the password at every login too, and make a flagged account change it | Both paths, plus passwords set before this ADR or breached later | A new gate on every page, a Pwned Passwords call on every login (up to the 2-second timeout), and a user who skipped the check can still use the Supabase API directly | Design only, not built |
+| Check the password at every login too, and make a flagged account change it | Both paths, plus passwords set before this ADR or breached later | A new gate on every page, a Pwned Passwords call on every login (up to the 2-second timeout), and a user who skipped the check can still use the Supabase API directly | Chosen by Gobbu (2026-11-24) |
 
-**Decision:** accepted as a known gap, recorded here and in M1.md's Gaps. Every way Porchlet offers to set a password runs the check (ASVS 6.2.4 and 6.2.12 are about the passwords the app accepts), the bypass needs the account holder's own deliberate API call, and no option at $0 closes both paths. The login-time check is the one to revisit if a hosted Porchlet ever needs to protect users from themselves.
+**Decision (Part 2):** check the password again at every login (Gobbu's choice, 2026-11-24), in the login Server Action, which sees the password:
+
+- Only after Supabase accepted the password, so a wrong password never costs a Pwned Passwords call and the answer to a wrong password is unchanged.
+- `newPasswordProblem` as for a new password: the bundled list, then Pwned Passwords (fail-open, as ADR 0019).
+- A bad password still signs the user in, so they can change it without email, but sets an HttpOnly cookie (`porchlet-password-change`, `__Host-` prefixed over HTTPS, same attributes as the session cookie) and lands on `/reset` with "The password you logged in with is too common or has appeared in a data breach. Choose a new one to continue." While the cookie is there, the proxy sends every protected page (`/w`, `/settings`) back to `/reset`. Saving an accepted new password or logging out removes it; every clean login clears it too.
+
+Why a cookie and not a flag in the database: the flag only matters to the browser that just logged in with the password, the login check runs again on every other device's login, and a cookie needs no migration, no per-request database call in the proxy and no hosted change. What it doesn't do, recorded as gaps in M1.md:
+
+- A user who deletes the cookie, or calls the Supabase API directly with their token, skips the prompt. Both are the account holder's own deliberate action on their own account, the same as the bypass itself. When M2 adds shared data, RLS still decides what any token can read.
+- Other devices that were already signed in are not sent to `/reset`; they meet the check at their next login (sessions end within 24 hours, ADR 0020).
+- If Pwned Passwords is unreachable at login, only the list applies (logged as for sign-up).
+- Every successful login waits for one Pwned Passwords call (2-second cap). Not measured from Vercel; the sandbox's proxy blocks the API.
 
 ## Consequences
 
 - ASVS 5.0.0 6.2.9 (at least 64 characters allowed) holds for ASCII passwords only. A passphrase in a script that needs 2 to 4 bytes per character is limited to 18 to 36 characters by Supabase's bcrypt limit. Porchlet can't raise it on the free plan. Recorded in M1.md.
 - Tests in `e2e/passwords.spec.ts`: 5 emoji refused as too short and 19 emoji refused as too long at sign-up through the app, with the browser's own check off (no email sent); `e2e/auth.spec.ts`: 19 emoji refused as too long on `/reset`; `newPasswordProblem` skips 9 two-byte characters, checks 10, refuses 73 bytes and 19 emoji with no lookup, and checks 18 emoji. The lookup tests now turn the breach check on for themselves, so `BREACHED_PASSWORD_CHECK=off` in the runner's environment doesn't fail them.
 - If a Supabase upgrade changes how it counts either limit, the two sign-up tests fail.
+- `e2e/passwords.spec.ts` "a login with a common password set outside the app must change it first": sets `password1234` through `PUT /auth/v1/user`, then checks the login lands on `/reset`, `/w` sends it back, a listed new password is refused, a strong one opens `/w`, and the next login with it goes straight to `/w` with no flag cookie. Planted bad case: with the proxy's check turned off, the test fails at `/w`.

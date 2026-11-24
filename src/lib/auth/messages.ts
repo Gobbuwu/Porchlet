@@ -12,6 +12,8 @@ export const MESSAGES = {
   "common-password": "Choose a different password: this one is too common or has appeared in a data breach.",
   "password-too-long":
     "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
+  "password-change-required":
+    "The password you logged in with is too common or has appeared in a data breach. Choose a new one to continue.",
   "same-password": "Choose a password that is different from your current one.",
   "invalid-email": "Enter a valid email address.",
   "link-used": "This link has expired or was already used. Ask for a new one.",
