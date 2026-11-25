@@ -54,7 +54,7 @@ export async function createProject(page: Page, name: string) {
 export const projectItem = (page: Page, name: string) =>
   page.getByRole("list", { name: "Projects", exact: true }).getByRole("listitem", { name, exact: true });
 
-async function rpc(context: BrowserContext, fn: string, args: Record<string, unknown>) {
+export async function rpc(context: BrowserContext, fn: string, args: Record<string, unknown>) {
   const { url, key } = supabaseEnv();
   const { access_token } = await readSession(context);
   return fetch(`${url}/rest/v1/rpc/${fn}`, {

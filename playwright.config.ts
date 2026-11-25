@@ -33,7 +33,13 @@ export default defineConfig({
       },
     },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
-  ],
+  ].flatMap((project) => [
+    // e2e/invite-cap.spec.ts uses up the E2E admin's 20 invitations per hour, which the other
+    // tests need, so it runs on its own after them: `--project=chromium --project=chromium-cap`
+    // (ADR 0024). Run scripts/e2e/make-admin.sh again for a fresh admin before the next run.
+    { ...project, testIgnore: /invite-cap\.spec\.ts/ },
+    { ...project, name: `${project.name}-cap`, testMatch: /invite-cap\.spec\.ts/, dependencies: [project.name] },
+  ]),
   webServer: {
     command: "npm run start -- --hostname 127.0.0.1 --port 3000",
     url: "http://127.0.0.1:3000/api/health",

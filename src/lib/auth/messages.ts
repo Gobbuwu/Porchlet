@@ -38,6 +38,28 @@ export const MESSAGES = {
   "project-restored": "Project restored.",
   "member-removed": "Member removed.",
   "left-workspace": "You left the workspace.",
+  // Invites (M2 PR 3, ADR 0024).
+  "invite-sent": "Invitation emailed. You can also copy the link below and send it yourself.",
+  "invite-has-account":
+    "This address already has an account, so no email was sent. Copy the link below and send it to them.",
+  "invite-email-failed": "The invitation was made, but the email could not be sent. Copy the link below and send it yourself.",
+  "invite-revoked": "Invitation withdrawn.",
+  "invite-already-accepted": "This invitation was already accepted, so it can't be withdrawn.",
+  "invite-pending": "This address already has an open invitation. Withdraw it first to send a new one.",
+  "invite-workspace-limit": "This workspace has 20 open invitations. Withdraw some before inviting more.",
+  "invite-hourly-limit": "You have sent 20 invitations in the last hour. Try again later.",
+  "already-member": "This person is already a member of the workspace.",
+  "invite-invalid": "This invite link is not valid, or the invitation was withdrawn. Ask for a new one.",
+  "invite-used": "This invitation was already used.",
+  "invite-expired": "This invitation has expired. Ask for a new one.",
+  "invite-wrong-account":
+    "This invitation is for a different email address. Log out, then log in with the address it was sent to.",
+  "invite-joined": "You joined the workspace. Choose a password to finish setting up your account.",
+  "invite-not-joined":
+    "Your account is ready, but the invitation could not be used just now. Choose a password, then open the invite link again.",
+  "invite-email-link-used":
+    "The sign-in part of this email's link has expired or was already used; the invitation may still be open. Log in with the invited address to join. No password yet? Use \"Forgot your password?\" with that address first, then open the email's link again.",
+  "joined-workspace": "You joined the workspace.",
 } as const;
 
 export type MessageCode = keyof typeof MESSAGES;

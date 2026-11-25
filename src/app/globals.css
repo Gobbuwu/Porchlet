@@ -59,3 +59,7 @@ button {
 .items form {
   margin-top: 0.5rem;
 }
+
+input.wide {
+  width: 100%;
+}

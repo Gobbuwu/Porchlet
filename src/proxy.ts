@@ -21,7 +21,7 @@ import {
 //    This gates pages only: Server Actions can be posted to any path, so an action that works on
 //    users' data must not rely on it (RLS decides what a session can read or change).
 
-const PROTECTED = ["/w", "/settings"];
+const PROTECTED = ["/w", "/settings", "/invite"];
 const SIGNED_OUT_ONLY = ["/login", "/signup"];
 
 const under = (path: string, prefixes: string[]) =>

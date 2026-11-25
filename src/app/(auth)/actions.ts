@@ -10,6 +10,7 @@ import { safeNext } from "@/lib/auth/redirect";
 import { startedFromEmailedLink } from "@/lib/auth/session";
 import type { FormState } from "@/lib/auth/types";
 import { answer, field } from "@/lib/form-answer";
+import { inviteErrorCode, newInviteCookieName, tokenFromInviteLink } from "@/lib/invites";
 import { isHttps } from "@/lib/http";
 import { hardenCookie, passwordChangeCookieName } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
@@ -65,6 +66,9 @@ async function endSession(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { error } = await supabase.auth.signOut({ scope: "local" });
   if (error) logAuthError("logout", error);
   await requirePasswordChange(null);
+  // The owner's new invite link (shown for 5 minutes) goes with the session.
+  const secure = isHttps(await headers());
+  (await cookies()).set(newInviteCookieName(secure), "", { ...hardenCookie({}, secure), sameSite: "strict", maxAge: 0 });
 }
 
 // Flags the session that `accessToken` belongs to. Without a session id the flag couldn't be
@@ -198,11 +202,15 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
 export async function confirmEmailLink(_state: FormState, formData: FormData): Promise<FormState> {
   const type = field(formData, "type");
   const tokenHash = field(formData, "token_hash");
+  const inviteParam = field(formData, "invite");
   // Back to the same link, so a visitor who was rate limited can press the button again.
-  const page = `/auth/confirm?${new URLSearchParams({ token_hash: tokenHash, type })}`;
-  if ((type !== "email" && type !== "recovery") || !tokenHash) {
+  const page = `/auth/confirm?${new URLSearchParams({ token_hash: tokenHash, type, ...(type === "invite" ? { invite: inviteParam } : {}) })}`;
+  if ((type !== "email" && type !== "recovery" && type !== "invite") || !tokenHash) {
     return answer(page, { error: "link-invalid" });
   }
+  // An invite email's link (ADR 0024): only the token is taken from the Porchlet link inside it.
+  const inviteToken = type === "invite" ? tokenFromInviteLink(inviteParam) : null;
+  if (type === "invite" && !inviteToken) return answer(page, { error: "link-invalid" });
   const supabase = await createClient();
   const taken = await takeAttempt(supabase, RULES.verify);
   if ("error" in taken) return answer(page, { error: taken.error });
@@ -217,7 +225,33 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   if (error) {
     logAuthError(`verify-${type}`, error);
     if (error.status === 429) return answer(page, { error: authErrorCode(error) });
+    // The sign-in part of an invite link lasts only otp_expiry (10 minutes in config.toml, 1 hour
+    // by default on hosted; the invitation lasts 7 days), and stops working once the address is
+    // confirmed some other way, such as the person's own sign-up (measured, ADR 0024). The
+    // invitation itself may still be open, so the person can join from a session of that address.
+    // Sent straight to the right page: a page's own redirect while it renders a Server Action's
+    // redirect target shows the new page but leaves the old URL (measured, E2E).
+    if (inviteToken) {
+      const invitePage = `/invite?${new URLSearchParams({ token: inviteToken })}`;
+      const signedIn = !!(await supabase.auth.getClaims()).data?.claims?.sub;
+      redirect(
+        signedIn
+          ? `${invitePage}&error=invite-email-link-used`
+          : `/login?${new URLSearchParams({ next: invitePage, error: "invite-email-link-used" })}`,
+      );
+    }
     return answer(page, { error: "link-used" });
+  }
+  if (inviteToken) {
+    // The invited person's account is new and has no password they know, so this session must
+    // choose one before it can use the app, as a reset link's must (ADR 0023). It joins first, in
+    // this POST, so nothing depends on carrying the token through the password page.
+    const { error: acceptError } = await supabase.rpc("accept_invitation", { p_token: inviteToken });
+    const acceptCode = acceptError ? inviteErrorCode(acceptError) : undefined;
+    if (acceptError && !acceptCode) console.warn(`invite accept failed: code=${acceptError.code}`);
+    if (!(await flagSession(supabase, data.session?.access_token))) return answer(page, { error: "link-used" });
+    // The reason the database gave, or a general one; the account works either way.
+    redirect(acceptError ? `/reset?error=${acceptCode ?? "invite-not-joined"}` : "/reset?notice=invite-joined");
   }
   // A reset link's session exists to set a new password, and Supabase Auth lets it do so without
   // the current one, so it can't open the app until it has (ADR 0023): otherwise the link would
