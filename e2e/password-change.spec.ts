@@ -1,5 +1,5 @@
 import type { BrowserContext } from "@playwright/test";
-import { confirmLink, mailCount, verifyLink } from "./support/mail";
+import { confirmLink } from "./support/mail";
 import { expect, test } from "./support/test";
 import {
   alertIn,
@@ -8,6 +8,7 @@ import {
   flaggedUser,
   newUser,
   openResetLink,
+  openSignInLink,
   readSession,
   signUp,
   signUpAndConfirm,
@@ -149,20 +150,7 @@ test("/reset for an ended password session says to log in again", async ({ page,
 
 test("a sign-in link of the same user in a flagged browser keeps the flag", async ({ page, context }) => {
   const user = await flaggedUser(page, context, "flag-same-user");
-  // Supabase sends a sign-in link to anyone who asks its API; its token is the token hash that
-  // /auth/confirm takes with type=email.
-  const { url, key } = supabaseEnv();
-  const before = await mailCount(user.email);
-  const otp = await fetch(`${url}/auth/v1/otp`, {
-    method: "POST",
-    headers: { apikey: key, "content-type": "application/json" },
-    body: JSON.stringify({ email: user.email, create_user: false }),
-  });
-  expect(otp.status).toBe(200);
-  const token = new URL(await verifyLink(user.email, /Your sign-in link/, before)).searchParams.get("token");
-  expect(token).toBeTruthy();
-  await page.goto(`/auth/confirm?${new URLSearchParams({ token_hash: token!, type: "email" })}`);
-  await page.getByRole("button", { name: "Confirm email" }).click();
+  await openSignInLink(page, user.email);
   await expect(page).toHaveURL(/\/reset\?error=new-password-required$/);
   await page.goto("/w");
   await expect(page).toHaveURL(/\/reset\?error=new-password-required$/);

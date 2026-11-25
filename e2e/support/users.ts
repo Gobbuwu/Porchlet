@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
-import { confirmLink, mailCount } from "./mail";
+import { confirmLink, mailCount, verifyLink } from "./mail";
 
 // A fresh address and password per test, so tests can run in parallel and in any order.
 export function newUser(tag: string) {
@@ -115,4 +115,21 @@ export async function flaggedUser(page: Page, context: BrowserContext, tag: stri
   await fillLogin(page, user.email, "password1234");
   await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
   return { ...user, password: "password1234" };
+}
+
+// Asks Supabase Auth's API for a sign-in link (it sends one to anyone who asks; the app offers
+// none) and opens it through /auth/confirm, whose type=email takes the link's token hash.
+export async function openSignInLink(page: Page, email: string) {
+  const { url, key } = supabaseEnv();
+  const before = await mailCount(email);
+  const otp = await fetch(`${url}/auth/v1/otp`, {
+    method: "POST",
+    headers: { apikey: key, "content-type": "application/json" },
+    body: JSON.stringify({ email, create_user: false }),
+  });
+  expect(otp.status).toBe(200);
+  const token = new URL(await verifyLink(email, /Your sign-in link/, before)).searchParams.get("token");
+  expect(token).toBeTruthy();
+  await page.goto(`/auth/confirm?${new URLSearchParams({ token_hash: token!, type: "email" })}`);
+  await page.getByRole("button", { name: "Confirm email" }).click();
 }

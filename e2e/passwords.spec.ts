@@ -12,6 +12,7 @@ import {
   flaggedUser,
   newUser,
   openResetLink,
+  openSignInLink,
   setPasswordDirectly,
   signUpAndConfirm,
 } from "./support/users";
@@ -107,11 +108,14 @@ test("a login with a common password set outside the app must change it first", 
 });
 
 test("a leftover flag cookie from another session doesn't hold up a different sign-in", async ({ page, context }) => {
-  await signUpAndConfirm(page, "stale-flag");
+  const user = await signUpAndConfirm(page, "stale-flag");
   const [session] = (await context.cookies()).filter((c) => /^porchlet-auth/.test(c.name));
   // As if a flagged session had ended without logging out, leaving its cookie behind.
   await context.addCookies([{ ...session, name: "porchlet-password-change", value: "a-session-that-ended" }]);
   await page.goto("/w");
+  await expect(page).toHaveURL(/\/w$/);
+  // Nor is it carried to the same user's sign-in link: the current session isn't the flagged one.
+  await openSignInLink(page, user.email);
   await expect(page).toHaveURL(/\/w$/);
 });
 
