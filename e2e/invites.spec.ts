@@ -6,6 +6,7 @@ import {
   inviteFromPage,
   memberItems,
   openInvitations,
+  SITE,
 } from "./support/invites";
 import { confirmLink, mailCount } from "./support/mail";
 import { expect, test, waitForHydration } from "./support/test";
@@ -34,7 +35,8 @@ test("a new address gets an email, joins, and chooses a password", async ({ brow
   const { wid, name } = await ownerWorkspace(page, "Invite new");
   const client = newUser("invited");
   const link = await inviteFromPage(page, client.email, EMAILED);
-  await expect(openInvitations(page)).toHaveText([new RegExp(`^${client.email}`)]);
+  await expect(openInvitations(page)).toHaveCount(1);
+  await expect(openInvitations(page)).toContainText([client.email]);
 
   const ctx = await browser.newContext();
   const invitee = await ctx.newPage();
@@ -104,7 +106,7 @@ test("an existing account gets a link to copy; only that account can use it, onc
   await expect(pageB).toHaveURL(/\/invite\?token=[0-9a-f]{64}$/);
   await expect(pageB.getByText(`You are logged in as ${b.email}`)).toBeVisible();
   await pageB.getByRole("button", { name: "Join workspace" }).click();
-  await expect(pageB).toHaveURL(new RegExp(`/w/${wid}\\?notice=joined-workspace$`));
+  await expect(pageB).toHaveURL(`${SITE}/w/${wid}?notice=joined-workspace`);
   await expect(pageB.getByRole("status")).toHaveText("You joined the workspace.");
 
   // Used: a second press, by B or by anyone, is refused.

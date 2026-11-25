@@ -13,7 +13,9 @@ export async function inviteFromPage(page: Page, email: string, notice: RegExp):
   await page.getByRole("button", { name: "Send invitation" }).click();
   await expect(page.getByRole("status")).toHaveText(notice);
   const link = await page.getByLabel("Invite link").inputValue();
-  expect(link).toMatch(new RegExp(`^${SITE.replaceAll(".", "\\.")}/invite\\?token=[0-9a-f]{64}$`));
+  const prefix = `${SITE}/invite?token=`;
+  expect(link.startsWith(prefix), link).toBe(true);
+  expect(link.slice(prefix.length)).toMatch(/^[0-9a-f]{64}$/);
   return link;
 }
 
