@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, type BrowserContext, type Page } from "@playwright/test";
-import { confirmLink } from "./mail";
+import { confirmLink, mailCount } from "./mail";
 
 // A fresh address and password per test, so tests can run in parallel and in any order.
 export function newUser(tag: string) {
@@ -76,4 +76,43 @@ export function supabaseEnv(): { url: string; key: string } {
       .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1).trim()]),
   );
   return { url: env.NEXT_PUBLIC_SUPABASE_URL, key: env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY };
+}
+
+// Sets the signed-in user's password by calling Supabase Auth directly, skipping the app's check.
+// The session must come from an emailed link: Supabase Auth asks a password session for the
+// current password (require_current_password, ADR 0023). "password1234" is in the bundled list,
+// so the login check needs no Pwned Passwords call.
+export async function setPasswordDirectly(context: BrowserContext, password: string) {
+  const { url, key } = supabaseEnv();
+  const { access_token } = await readSession(context);
+  const response = await fetch(`${url}/auth/v1/user`, {
+    method: "PUT",
+    headers: { apikey: key, authorization: `Bearer ${access_token}`, "content-type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  expect(response.status, "Supabase Auth takes the password directly").toBe(200);
+}
+
+// Asks for a reset email in this browser and opens its link, ending on /reset with a new session.
+export async function openResetLink(page: Page, email: string) {
+  await page.goto("/forgot");
+  await page.getByLabel("Email").fill(email);
+  const before = await mailCount(email);
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByRole("status")).toBeVisible();
+  await page.goto(await confirmLink(email, /Reset your Porchlet password/, before));
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page).toHaveURL(/\/reset$/);
+}
+
+// A user whose password was set outside the app to a listed one, then logged in with it: the
+// login check flags the session and sends it to /reset (ADR 0021).
+export async function flaggedUser(page: Page, context: BrowserContext, tag: string) {
+  const user = await signUpAndConfirm(page, tag);
+  await setPasswordDirectly(context, "password1234");
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page).toHaveURL(/\/login\?signed_out=1$/);
+  await fillLogin(page, user.email, "password1234");
+  await expect(page).toHaveURL(/\/reset\?error=password-change-required$/);
+  return { ...user, password: "password1234" };
 }

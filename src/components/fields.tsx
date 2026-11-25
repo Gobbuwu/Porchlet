@@ -10,12 +10,20 @@ export function EmailField({ defaultValue }: { defaultValue?: string }) {
 // 10 is the minimum set in supabase/config.toml (design doc threat model row 11). Supabase Auth
 // accepts at most 72 UTF-8 bytes (bcrypt). These attributes are hints only: browsers count them
 // in UTF-16 units or graphemes, not bytes, so the server enforces both limits (ADR 0021).
-export function PasswordField({ label, autoComplete }: { label: string; autoComplete: "current-password" | "new-password" }) {
+export function PasswordField({
+  label,
+  autoComplete,
+  name = "password",
+}: {
+  label: string;
+  autoComplete: "current-password" | "new-password";
+  name?: "password" | "current_password";
+}) {
   return (
     <label>
       {label}
       <input
-        name="password"
+        name={name}
         type="password"
         autoComplete={autoComplete}
         required

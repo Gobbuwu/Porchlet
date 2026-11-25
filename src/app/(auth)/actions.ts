@@ -1,5 +1,6 @@
 "use server";
 
+import { isAuthSessionMissingError } from "@supabase/supabase-js";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
@@ -178,11 +179,26 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
   const password = field(formData, "password");
   const problem = await newPasswordProblem(password);
   if (problem) return answer("/reset", { error: problem });
-  const { error } = await supabase.auth.updateUser({ password });
+  // /reset shows the current-password field only to a session that didn't come from an emailed
+  // link; Supabase Auth checks it (require_current_password, ADR 0023), so leaving it out of a
+  // forged post only gets current_password_required. Its presence also says which message fits
+  // when the session is gone.
+  const passwordSession = formData.has("current_password");
+  const { error } = await supabase.auth.updateUser(
+    passwordSession ? { password, current_password: field(formData, "current_password") } : { password },
+  );
   if (error) {
     logAuthError("reset-update", error);
-    if (error.status === 401 || error.code === "session_not_found" || error.code === "no_authorization") {
-      return answer("/reset", { error: "reset-expired" });
+    // auth-js answers AuthSessionMissingError (400, no code) when Supabase Auth no longer knows the
+    // session, for example after it was ended server-side while its access token was still valid
+    // (measured, ADR 0023).
+    if (
+      isAuthSessionMissingError(error) ||
+      error.status === 401 ||
+      error.code === "session_not_found" ||
+      error.code === "no_authorization"
+    ) {
+      return answer("/reset", { error: passwordSession ? "session-ended" : "reset-expired" });
     }
     // This page has no email field, so Supabase's validation_failed can't be about an email.
     const code = authErrorCode(error);
@@ -210,18 +226,23 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   if (limited) return answer(page, { error: limited });
   // An emailed link starts a new session; if this browser's current session is flagged by the login
   // check, the new one is flagged too, so a link is no way around the change (ADR 0021). As in the
-  // proxy, the flag counts only while it holds the current session's id.
+  // proxy, the flag counts only while it holds the current session's id, and it is carried only to
+  // a session of the same user: another account's link in this browser has nothing to change.
   const flag = (await cookies()).get(passwordChangeCookieName(isHttps(await headers())))?.value;
-  const current = flag ? (await supabase.auth.getClaims()).data?.claims?.session_id : undefined;
-  const flagged = !!flag && flag === current;
+  const claims = flag ? (await supabase.auth.getClaims()).data?.claims : undefined;
+  const flaggedUser = !!flag && flag === claims?.session_id ? claims.sub : undefined;
   const { data, error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
   if (error) {
     logAuthError(`verify-${type}`, error);
     if (error.status === 429) return answer(page, { error: authErrorCode(error) });
     return answer(page, { error: "link-used" });
   }
+  // A reset link's session exists to set a new password, and Supabase Auth lets it do so without
+  // the current one, so it can't open the app until it has (ADR 0023): otherwise the link would
+  // be a way into the app that leaves the old password in place.
+  const mustChange = type === "recovery" || (!!flaggedUser && flaggedUser === data.user?.id);
   // If the new session can't be flagged it has been ended, and the link is used up.
-  if (flagged && !(await flagSession(supabase, data.session?.access_token))) {
+  if (mustChange && !(await flagSession(supabase, data.session?.access_token))) {
     return answer(page, { error: "link-used" });
   }
   redirect(type === "recovery" ? "/reset" : "/w");

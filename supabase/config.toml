@@ -231,7 +231,9 @@ enable_confirmations = true
 secure_password_change = false
 # If enabled, users will need to provide their current password to change their password, unless
 # they signed in with a one-time password, magic link, or recovery link.
-# require_current_password = true
+# On: a signed-in session can't change the password without it, even calling Supabase Auth
+# directly (docs/adr/0023-current-password-to-change-it.md). Hosted projects need the same setting.
+require_current_password = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 # 60s rather than 1s: a second request inside the window gets HTTP 429, which is the only Auth rate
 # limit the local stack enforces (per-IP limits need a rate-limit header the CLI never sets;
