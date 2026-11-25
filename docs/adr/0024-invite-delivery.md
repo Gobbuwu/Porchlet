@@ -16,6 +16,9 @@ M2 PR 3 builds the invite UI on PR 1's RPCs. D2 measured Supabase's side; buildi
 | M5 | `delete from auth.users` (as `postgres`) of a pending invited account | Its `auth.identities` and `auth.one_time_tokens` rows go with it (0 left); its invite link answers `403 otp_expired`; a sign-up for that address afterwards stores the chosen password |
 | M6 | The session the invite link gives | `amr` `[{"method":"otp"}]`, the same as a reset link, so ADR 0023's emailed-link rules apply |
 | M7 | A cleanup delete while a confirmation of that account holds its row (two sessions) | The delete waited 2.1 s for the lock, re-checked, deleted 0 rows; the account stayed, confirmed |
+| M8 | How long the invite email's sign-in part lasts (`invited_at` and `confirmation_sent_at` moved back) | 9 minutes: works; 11 minutes: `403 otp_expired`. It follows `otp_expiry` (600 s in `config.toml`, ASVS 5.0.0 6.5.5; 3600 s by default on hosted), not the invitation's 7 days |
+| M9 | An address signs up (not confirmed yet), then is invited | `200`; Supabase Auth reuses that account and sets `invited_at` on it; the password hash the person chose stays (60 characters). An account an invite email created has none (0) |
+| M10 | The cleanup's lookup with 10,000 accounts | 1.0 to 2.2 ms a call (3 calls), a sequential scan (0.6 ms): `lower(email)` has no index without `instance_id`. Supabase Auth stores addresses lower-cased (measured: `M4-Mixed-…@Example.TEST` stored lower case), but rows written another way may not be, so `lower()` stays |
 
 ## 1. Who sends the email, and with what key
 
@@ -45,17 +48,25 @@ The app builds `redirectTo` and the copy link from a new server-only setting, `S
 | Plan's wording: verify, set the password, then accept on `/invite` | The token has to survive `/reset`; the proxy's redirect to `/reset` (any app page while flagged) drops a query parameter, and a cookie adds state. Not built |
 | **Verify and accept in one POST, then set the password (chosen)** | Nothing to carry. If accepting fails (withdrawn, expired), the person still gets a working account and is told to ask for a new invitation (`invite-not-joined`) |
 
-**When the email's sign-in part is already used** (the person signed up on their own while invited, M2, or reset their password, M3): verifying fails, but the invitation may still be open. The action then sends a signed-in visitor to `/invite?token=…` with "The sign-in part of this email's link was already used…" and a **Join workspace** button, and a signed-out one to `/login` with that message and `/invite` as `next`. (A redirect to `/invite` that let the page itself redirect to `/login` showed the login form under the old URL: measured in E2E, so the action picks the page.) The email itself asks people not to sign up separately, because Supabase keeps no usable password then (M2); "Forgot password" fixes that (M3).
+**When the email's sign-in part has expired or is already used** (after `otp_expiry`, M8; or the person signed up on their own while invited, M2, or reset their password, M3): verifying fails, but the invitation may still be open. The action then sends a signed-in visitor to `/invite?token=…` with "The sign-in part of this email's link was already used…" and a **Join workspace** button, and a signed-out one to `/login` with that message and `/invite` as `next`. (A redirect to `/invite` that let the page itself redirect to `/login` showed the login form under the old URL: measured in E2E, so the action picks the page.) The email itself asks people not to sign up separately, because Supabase keeps no usable password then (M2), and says the button signs in only for a short while; "Forgot your password?" gives the invited address a password in both cases (M3), after which the email's button joins.
 
-## 4. Showing the link once
+| Option for the short sign-in window (M8) | Coverage |
+|---|---|
+| **Keep `otp_expiry` at 10 minutes; say so in the email and the pages, and route an expired link to logging in, with "Forgot your password?" for a person with no password yet (chosen)** | Works for 7 days with one extra email after the window. ASVS 6.5.5 kept for every emailed link |
+| Raise `otp_expiry` to its 24-hour maximum | One setting covers confirmation and reset links too, so all of them would break ASVS 6.5.5's 10 minutes, and 24 hours is still short of 7 days |
+| A "send the email again" button for owners | Withdraw and invite again does this today (M4: a new email; the cleanup and a new account in between). Not built |
 
-The database keeps only the token's hash (PR 1), so the link exists only in `create_invitation`'s answer. `inviteClient` redirects to `/w/<id>?notice=…&invite=<token>` on both paths (as ADR 0025 does for every success), and the owner's page shows **Invite link** when `invite` is 64 hex characters.
+## 4. Showing the link to copy
+
+The database keeps only the token's hash (PR 1), so the link exists only in `create_invitation`'s answer. `inviteClient` sets a cookie, `__Host-porchlet-new-invite` (`porchlet-new-invite` on plain-HTTP local runs) = `<workspace id>.<token>`, HttpOnly, `SameSite=Strict`, 5 minutes, then redirects to `/w/<id>?notice=…` on both paths (as ADR 0025 does for every success). The owner's page shows **Invite link** when that cookie is for this workspace.
 
 | Option | Coverage |
 |---|---|
-| **Token in the redirect's query (chosen)** | Works with and without JavaScript. The token stays in the owner's history and any request log, as it does in the invitee's `/invite?token=…` anyway (T6's open item: whether Vercel logs query strings is **unverified**). Low impact: the token is useless without a confirmed session of the invited address (T5; 050's wrong-account tests, E2E) |
-| A short-lived cookie read by the page | Server Components can't clear cookies, so it would show on every load until it expires. More state, same exposure on the owner's device. Not built |
+| Token in the redirect's query (the first version) | Works with and without JavaScript, but the token lands in the owner's history and request logs (the project's rule: no secrets in logs), and a crafted URL could make an owner's page show another workspace's link as this one's (`/code-review` findings). Replaced |
+| **A short-lived HttpOnly cookie bound to the workspace (chosen)** | Works with and without JavaScript; in no URL or log; a URL can't set it (E2E: a crafted `?invite=` shows no link; planted case: reading the query again fails that test). The link shows on each load for 5 minutes (Server Components can't delete a cookie), on that browser only |
 | Return it as form state (React only) | No link at all for a native post (ADR 0018). Rejected |
+
+The invitee's own link, `/invite?token=…`, still carries the token in its URL by nature (T6's open item: whether Vercel logs query strings is **unverified**). The token is useless without a confirmed session of the invited address (T5; 050's wrong-account tests, E2E).
 
 ## 5. Withdrawn and expired invitations delete the unused invited account (threat T8)
 
@@ -63,10 +74,10 @@ While Supabase's invited account exists, the person's own sign-up keeps no usabl
 
 | Option | Cost | Coverage |
 |---|---|---|
-| **A. In the database: an after-delete trigger on `invitations`, and an hourly Supabase Cron (`pg_cron`) job, both calling `private.delete_unused_invited_users()` (chosen)** | Migration `20261125030000_invite_cleanup.sql` (an index, two definer functions, a trigger, the job); `070_invite_cleanup.test.sql` (24 tests); `pg_cron` enabled (on hosted: `create extension pg_cron with schema pg_catalog`, supabase.com/docs/guides/cron/install) | Every way an invitation goes away (the owner's delete, a workspace cascade) and expiry (within the hour). Atomic with a concurrent confirmation (M7). No secret key. Deletes by SQL, which Supabase's docs allow ("You may delete users directly or via the management console", supabase.com/docs/guides/auth/managing-user-data); Supabase Auth writes no audit-log entry for it |
+| **A. In the database: an after-delete trigger on `invitations`, and an hourly Supabase Cron (`pg_cron`) job, both calling `private.delete_unused_invited_users()` (chosen)** | Migration `20261125030000_invite_cleanup.sql` (an index, two definer functions, a trigger, the job); `070_invite_cleanup.test.sql` (25 tests); `pg_cron` enabled (on hosted: `create extension pg_cron with schema pg_catalog`, supabase.com/docs/guides/cron/install) | Every way an invitation goes away (the owner's delete, a workspace cascade) and expiry (within the hour). Atomic with a concurrent confirmation (M7). No secret key. Deletes by SQL, which Supabase's docs allow ("You may delete users directly or via the management console", supabase.com/docs/guides/auth/managing-user-data); Supabase Auth writes no audit-log entry for it |
 | B. `auth.admin.deleteUser` (secret key) in the revoke action, after a lookup of the account | A second secret-key use (ADR 0005 widens), a definer lookup by email | Revoke only; nothing at expiry (the person would need "Forgot password", M3); a confirmation between the lookup and the delete would delete a just-confirmed account |
 
-Only accounts nobody used are deleted: invited, never confirmed, never signed in, checked in the delete itself; and only while no invitation for the address is open in any workspace. The hourly job also requires a Porchlet invitation for the address, so an invite sent from the Supabase dashboard is left alone. Each condition has a test and a planted case that fails it (M2.md section 10). Both functions are in `private` with no execute grant for the API roles.
+Only accounts nobody used are deleted: invited, never confirmed, never signed in, and without a password, checked in the delete itself. The password check came from `/code-review`: an invite to an address whose own sign-up isn't confirmed yet marks that account invited too (M9), and it holds the password the person chose. And only while no invitation for the address is open in any workspace. The hourly job also requires a Porchlet invitation for the address, so an invite sent from the Supabase dashboard is left alone. Each condition has a test and a planted case that fails it (M2.md section 10). Both functions are in `private` with no execute grant for the API roles.
 
 ## 6. Testing the hourly cap without breaking the other tests
 
@@ -78,3 +89,4 @@ The cap (20 per owner per hour, T7) is the only limit on invite emails (D2), and
 - Hosted projects need the invite template and subject (the M5 wizard sets them, as for the confirmation and reset templates), `pg_cron`, and `SITE_URL` matching Supabase's `site_url`.
 - Owners learn whether an address has an account (T16, accepted in M2.md).
 - An address invited to several workspaces keeps its pending account until the last open invitation goes.
+- The cleanup scans `auth.users` once per deleted invitation (M10): about 1 to 2 ms at 10,000 accounts.
