@@ -20,11 +20,14 @@ scripts/ci/check-client-bundle.sh .next/static   # no secret key in the browser 
 # Database (pgTAP) on the local stack
 npx supabase db start
 npx supabase db lint --schema public,private --level warning --fail-on warning
-npm run test:db
+npm run test:db 2>&1 | tee /tmp/pgtap.log
+scripts/ci/db-count-check.sh /tmp/pgtap.log       # cross-checks the pgTAP and table counts
+scripts/ci/db-race-check.sh                    # parallel invitation calls in two sessions
 
 # E2E: full stack minus unused services (keeps Auth, REST and Mailpit)
 npx supabase start -x realtime,storage-api,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
-scripts/e2e/write-env.sh         # writes .env.local (URL, publishable key, RATE_LIMIT_KEY)
+scripts/e2e/write-env.sh         # rewrites .env.local (URL, publishable key, RATE_LIMIT_KEY)
+scripts/ci/session-limit-check.sh  # session limits against the real Auth server
 npm run build && npx playwright test --project=chromium
 ```
 
@@ -36,7 +39,8 @@ Cloud or sandbox tips:
   Hub 429s, add `{"registry-mirrors":["https://mirror.gcr.io"]}` to `/etc/docker/daemon.json`.
 - No Firefox/WebKit download: set `PW_CHROMIUM_PATH` to a preinstalled Chromium and let CI run the
   other two engines.
-- No outbound internet: `BREACHED_PASSWORD_CHECK=off` in `.env.local`.
+- No outbound internet: run `echo BREACHED_PASSWORD_CHECK=off >> .env.local` after each
+  `write-env.sh` (it rewrites the file).
 - Stop the app with `fuser -k 3000/tcp` (`pkill "next start"` misses `next-server`).
 
 ## Rules
