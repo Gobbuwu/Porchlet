@@ -23,6 +23,8 @@ Options considered (sources and table in the M1 thread's comparison):
 Option 4.
 
 **The counter.**
+*Amended 2026-11-25 by [ADR 0022](0022-atomic-rate-limit-take.md): `rate_limit_hit` checked and counted in separate steps, so parallel posts got past every limit. `rate_limit_take` and `rate_limit_release` replace it; the limits, buckets and key below are unchanged.*
+
 - `public.rate_limit_hit(key, scope, ip, window, record)` counts attempts per scope and visitor IP in `private.rate_limit_hits`.
   - IPv4 counts per address. IPv6 counts per /64.
   - Rows older than an hour are deleted.

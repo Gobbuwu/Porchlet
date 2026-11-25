@@ -20,6 +20,7 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0019](0019-common-and-breached-password-check.md) | New passwords are checked against a bundled common list and Pwned Passwords | Accepted |
 | [0020](0020-session-limits-in-the-database.md) | Session lifetime limits set in the database | Accepted |
 | [0021](0021-password-length-and-login-check.md) | Password length checked like Supabase counts it; passwords checked again at every login | Accepted |
+| [0022](0022-atomic-rate-limit-take.md) | The auth limiter checks and counts an attempt in one atomic step | Accepted |
 | [0023](0023-current-password-to-change-it.md) | A password change asks for the current password; a reset link's session must save a new one | Accepted |
 
 ADRs 0006-0010 are written when their milestone starts (see the M0 doc).

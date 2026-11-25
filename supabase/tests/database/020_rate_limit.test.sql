@@ -1,49 +1,101 @@
--- public.rate_limit_hit and its private tables (ADR 0015).
--- Covers: public.rate_limit_hit, private.rate_limit_hits, private.rate_limit_key
+-- public.rate_limit_take, public.rate_limit_release and their private tables (ADR 0015, 0022).
+-- Covers: public.rate_limit_take, public.rate_limit_release, private.rate_limit_key_ok,
+-- private.rate_limit_hits, private.rate_limit_key
+-- Parallel calls can't be run from one session; e2e/rate-limit.spec.ts covers those. The refusal
+-- outside read committed can't be tested here either: pgTAP runs inside a transaction that has
+-- already run queries, so its isolation level can no longer change.
 begin;
-select plan(16);
+select plan(34);
 
 -- Tests run in a transaction, so this replaces any key the local stack holds only until rollback.
 delete from private.rate_limit_key;
 insert into private.rate_limit_key (key_hash) values (extensions.digest('test-key', 'sha256'));
 
--- 1-4. The tables are closed to the API roles.
+-- 1-5. The tables and the key check are closed to the API roles.
 select table_privs_are('private', 'rate_limit_hits', 'anon', array[]::text[], 'anon has nothing on rate_limit_hits');
 select table_privs_are('private', 'rate_limit_hits', 'authenticated', array[]::text[], 'authenticated has nothing on rate_limit_hits');
 select table_privs_are('private', 'rate_limit_key', 'anon', array[]::text[], 'anon has nothing on rate_limit_key');
 select table_privs_are('private', 'rate_limit_key', 'authenticated', array[]::text[], 'authenticated has nothing on rate_limit_key');
+select ok(not has_function_privilege('anon', 'private.rate_limit_key_ok(text)', 'execute')
+          and not has_function_privilege('authenticated', 'private.rate_limit_key_ok(text)', 'execute'),
+  'the API roles cannot call private.rate_limit_key_ok');
+
+-- The old two-step function is gone.
+select hasnt_function('public', 'rate_limit_hit', 'the two-step rate_limit_hit is dropped');
 
 set local role anon;
 
--- 5-6. A wrong or missing key is refused and records nothing.
-select is(public.rate_limit_hit('wrong-key', 'login', '203.0.113.1', 600, true), null, 'a wrong key returns null');
-select is(public.rate_limit_hit(null, 'login', '203.0.113.1', 600, true), null, 'a missing key returns null');
+-- 7-8. A wrong or missing key is refused and records nothing.
+select is(public.rate_limit_take('wrong-key', '203.0.113.1', '{login}', '{3}', '{600}'), null, 'a wrong key returns null');
+select is(public.rate_limit_take(null, '203.0.113.1', '{login}', '{3}', '{600}'), null, 'a missing key returns null');
 
--- 7-9. Counting: record adds one; a check without record does not.
-select is(public.rate_limit_hit('test-key', 'login', '203.0.113.1', 600, true), 1, 'first recorded hit counts 1');
-select is(public.rate_limit_hit('test-key', 'login', '203.0.113.1', 600, true), 2, 'second recorded hit counts 2');
-select is(public.rate_limit_hit('test-key', 'login', '203.0.113.1', 600, false), 2, 'a check does not add a hit');
+-- 9-12. Taking: each call takes one hit until the limit, then returns an empty array.
+select is(cardinality(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{3}', '{600}')), 1, 'first take returns one hit id');
+select is(cardinality(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{3}', '{600}')), 1, 'second take returns one hit id');
+select is(cardinality(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{3}', '{600}')), 1, 'third take returns one hit id');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{3}', '{600}'), '{}'::bigint[], 'a take over the limit returns an empty array');
 
--- 10-11. Buckets are separate per IP and per scope.
-select is(public.rate_limit_hit('test-key', 'login', '203.0.113.2', 600, false), 0, 'another IP has its own bucket');
-select is(public.rate_limit_hit('test-key', 'signup', '203.0.113.1', 600, false), 0, 'another scope has its own bucket');
+-- 13-14. Buckets are separate per IP and per scope.
+select is(cardinality(public.rate_limit_take('test-key', '203.0.113.2', '{login}', '{3}', '{600}')), 1, 'another IP has its own bucket');
+select is(cardinality(public.rate_limit_take('test-key', '203.0.113.1', '{signup}', '{3}', '{600}')), 1, 'another scope has its own bucket');
 
--- 12. IPv6 addresses in one /64 share a bucket.
-select public.rate_limit_hit('test-key', 'login', '2001:db8:1:2::1', 600, true);
-select is(public.rate_limit_hit('test-key', 'login', '2001:db8:1:2:ffff::9', 600, false), 1, 'one IPv6 /64 is one bucket');
+-- 15-17. Several rules are all-or-nothing: a full bucket means nothing is recorded in the others.
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{acct,login}', '{5,3}', '{600,600}'), '{}'::bigint[],
+  'one full bucket refuses the whole take');
+reset role;
+select is((select count(*)::int from private.rate_limit_hits where bucket = 'acct|203.0.113.1'), 0,
+  'a refused take records nothing in the bucket that had room');
+set local role anon;
+select is(cardinality(public.rate_limit_take('test-key', '203.0.113.9', '{acct,login}', '{5,3}', '{600,600}')), 2,
+  'a take with room in every bucket returns one hit id per rule');
 
--- 13. Junk in the IP becomes the 'unknown' bucket instead of an error.
-select is(public.rate_limit_hit('test-key', 'login', 'not an ip', 600, true), 1, 'an unparsable IP is counted as unknown');
+-- 18-20. Releasing gives a hit back, so the bucket has room again.
+select is(public.rate_limit_release('wrong-key', array[1::bigint]), null, 'release refuses a wrong key');
+select is(public.rate_limit_release('test-key', '{}'), null, 'release refuses an empty list');
+reset role;
+select is(
+  (select public.rate_limit_release('test-key', array_agg(id)) from private.rate_limit_hits where bucket = 'login|203.0.113.1'),
+  3, 'release removes the given hits');
+set local role anon;
 
--- 14-15. Bad scope or window is refused.
-select is(public.rate_limit_hit('test-key', repeat('x', 121), '203.0.113.1', 600, true), null, 'an over-long scope is refused');
-select is(public.rate_limit_hit('test-key', 'login', '203.0.113.1', 0, true), null, 'a zero window is refused');
+-- 21. IPv6 addresses in one /64 share a bucket.
+select public.rate_limit_take('test-key', '2001:db8:1:2::1', '{v6}', '{1}', '{600}');
+select is(public.rate_limit_take('test-key', '2001:db8:1:2:ffff::9', '{v6}', '{1}', '{600}'), '{}'::bigint[], 'one IPv6 /64 is one bucket');
+
+-- 22. An IPv4-mapped IPv6 address is its IPv4 address, not the shared ::/64.
+select public.rate_limit_take('test-key', '::ffff:198.51.100.7', '{mapped}', '{1}', '{600}');
+select is(public.rate_limit_take('test-key', '198.51.100.7', '{mapped}', '{1}', '{600}'), '{}'::bigint[],
+  'an IPv4-mapped address shares the IPv4 bucket');
+
+-- 23-24. A netmask is dropped, and the old IPv4-compatible form (::a.b.c.d) is its IPv4 address.
+select is(public.rate_limit_take('test-key', '::ffff:198.51.100.7/0', '{mapped}', '{1}', '{600}'), '{}'::bigint[],
+  'an IPv4-mapped address with a netmask still shares the IPv4 bucket');
+select is(public.rate_limit_take('test-key', '::198.51.100.7', '{mapped}', '{1}', '{600}'), '{}'::bigint[],
+  'an IPv4-compatible address shares the IPv4 bucket');
+
+-- 25. Junk in the IP becomes the 'unknown' bucket instead of an error.
+select is(cardinality(public.rate_limit_take('test-key', 'not an ip', '{junk}', '{1}', '{600}')), 1, 'an unparsable IP is counted as unknown');
+
+-- 26-32. Bad arguments are refused.
+select is(public.rate_limit_take('test-key', '203.0.113.1', array[repeat('x', 121)], '{3}', '{600}'), null, 'an over-long scope is refused');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{3}', '{0}'), null, 'a zero window is refused');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{0}', '{600}'), null, 'a zero limit is refused');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{a,b}', '{3}', '{600,600}'), null, 'arrays of different lengths are refused');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{a,a}', '{3,3}', '{600,600}'), null, 'a repeated scope is refused');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{}', '{}', '{}'), null, 'no rules is refused');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{a,NULL}', '{3,3}', '{600,600}'), null, 'a null scope is refused');
 
 reset role;
 
--- 16. Hits older than the window don't count.
-update private.rate_limit_hits set at = now() - interval '11 minutes' where bucket = 'login|203.0.113.1';
-select is(public.rate_limit_hit('test-key', 'login', '203.0.113.1', 600, false), 0, 'hits outside the window are not counted');
+-- 33. Hits older than the window don't count.
+update private.rate_limit_hits set at = now() - interval '11 minutes' where bucket = 'v6|2001:db8:1:2::/64';
+select is(cardinality(public.rate_limit_take('test-key', '2001:db8:1:2::1', '{v6}', '{1}', '{600}')), 1,
+  'hits outside the window are not counted');
+
+-- 34. A login gives its hit back after signing in, so authenticated can call release too.
+set local role authenticated;
+select is(public.rate_limit_release('test-key', array[0::bigint]), 0, 'authenticated can call release');
+reset role;
 
 select * from finish();
 rollback;

@@ -23,9 +23,9 @@ select is_empty(
 select results_eq(
   $$ select p.oid::regprocedure::text
        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-      where n.nspname = 'public' and has_function_privilege('anon', p.oid, 'execute') $$,
-  $$ values ('rate_limit_hit(text,text,text,integer,boolean)') $$,
-  'anon can execute only rate_limit_hit() in public (setup_status() is added in M5)');
+      where n.nspname = 'public' and has_function_privilege('anon', p.oid, 'execute') order by 1 $$,
+  $$ values ('rate_limit_release(text,bigint[])'), ('rate_limit_take(text,text,text[],integer[],integer[])') $$,
+  'anon can execute only rate_limit_take() and rate_limit_release() in public (setup_status() is added in M5)');
 
 -- 4-5. The private schema is closed to the API roles.
 select ok(not has_schema_privilege('anon', 'private', 'usage'), 'anon has no usage on schema private');
