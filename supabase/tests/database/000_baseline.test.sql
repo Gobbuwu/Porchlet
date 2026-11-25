@@ -1,7 +1,7 @@
 -- Baseline checks that every later migration must keep passing.
 -- Covers: private.instance, private.rate_limit_hits, private.rate_limit_key
 begin;
-select plan(25);
+select plan(26);
 
 -- 1-3. Nothing in the API schemas is open by default.
 -- private is included as defence in depth (migration 20261124000000_private_rls.sql).
@@ -27,10 +27,25 @@ select results_eq(
   $$ values ('rate_limit_release(text,bigint[])'), ('rate_limit_take(text,text,text[],integer[],integer[])') $$,
   'anon can execute only rate_limit_take() and rate_limit_release() in public (setup_status() is added in M5)');
 
--- 4-5. The private schema is closed to the API roles.
+-- 4-6. The private schema is closed to anon; authenticated reaches only the policy helpers.
 select ok(not has_schema_privilege('anon', 'private', 'usage'), 'anon has no usage on schema private');
-select ok(not has_schema_privilege('authenticated', 'private', 'usage'),
-  'authenticated has no usage on schema private (M2 grants it for the policy helpers)');
+-- M2 grants authenticated usage on private for the policy helpers, and execute on them only.
+select results_eq(
+  $$ select p.oid::regprocedure::text
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'private' and has_function_privilege('authenticated', p.oid, 'execute') order by 1 $$,
+  $$ values ('private.co_member_ids()'), ('private.member_workspace_ids()'), ('private.owner_workspace_ids()') $$,
+  'authenticated can execute only the three policy helpers in private');
+-- With usage on private, a grant on a private table or sequence would take effect, so none may exist.
+select is_empty(
+  $$ select c.oid::regclass::text || ' to ' || r.rolname
+       from pg_class c join pg_namespace n on n.oid = c.relnamespace
+            cross join (values ('anon'), ('authenticated')) r (rolname)
+      where n.nspname = 'private'
+        and ((c.relkind in ('r', 'p', 'v', 'm', 'f')
+              and has_table_privilege(r.rolname, c.oid, 'select,insert,update,delete,truncate,references,trigger'))
+          or (c.relkind = 'S' and has_sequence_privilege(r.rolname, c.oid, 'usage,select,update'))) $$,
+  'anon and authenticated have no privileges on any table, view or sequence in private');
 
 -- 6-11. private.instance: one row, no second row, no API access.
 select has_table('private', 'instance', 'private.instance exists');

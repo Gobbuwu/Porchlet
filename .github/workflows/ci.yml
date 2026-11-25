@@ -124,6 +124,9 @@ jobs:
       - name: Count cross-check
         if: ${{ !cancelled() }}
         run: scripts/ci/db-count-check.sh pgtap.log
+      - name: Parallel invitation calls (two sessions)
+        if: ${{ !cancelled() }}
+        run: scripts/ci/db-race-check.sh
 
   e2e:
     name: E2E (${{ matrix.browser }})
