@@ -1,0 +1,99 @@
+-- The invite flow's account check (M2 PR 3, ADR 0024 section 7): before and after the invite
+-- email, the owner deletes the invited address's unconfirmed, never-signed-in account that has a
+-- password (someone else's sign-up would keep that password). Every other account stays. Also the
+-- cleanup's volatile open-invitation check. Migration 20261125040000_invite_account_check.sql.
+-- Covers: public.invitations
+begin;
+select plan(17);
+
+-- A owns X, B owns Y. Q* are accounts with each invitation's address.
+insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_at) values
+  ('00000000-0000-4000-a000-00000000000a', 'a@example.test', now(), null, now()),
+  ('00000000-0000-4000-a000-00000000000b', 'b@example.test', now(), null, now()),
+  ('00000000-0000-4000-b000-000000000001', 'q1@example.test', null, null, null),     -- someone's sign-up, unconfirmed
+  ('00000000-0000-4000-b000-000000000002', 'q2@example.test', null, now(), null),    -- invite email's account, no password
+  ('00000000-0000-4000-b000-000000000003', 'q3@example.test', now(), null, now()),   -- confirmed, signed in
+  ('00000000-0000-4000-b000-000000000004', 'q4@example.test', null, null, now()),    -- unconfirmed but signed in
+  ('00000000-0000-4000-b000-000000000005', 'Q5@Example.TEST', null, now(), null),    -- sign-up then invite, mixed case
+  ('00000000-0000-4000-b000-000000000006', 'q6@example.test', now(), null, null);    -- confirmed, never signed in
+update auth.users set encrypted_password = extensions.crypt('someone-elses-password', extensions.gen_salt('bf'))
+ where id in ('00000000-0000-4000-b000-000000000001', '00000000-0000-4000-b000-000000000003',
+              '00000000-0000-4000-b000-000000000004', '00000000-0000-4000-b000-000000000005',
+              '00000000-0000-4000-b000-000000000006');
+insert into public.workspaces (id, name, created_by) values
+  ('00000000-0000-4000-c000-0000000000f1', 'X', '00000000-0000-4000-a000-00000000000a'),
+  ('00000000-0000-4000-c000-0000000000f2', 'Y', '00000000-0000-4000-a000-00000000000b');
+insert into public.workspace_members (workspace_id, user_id, role) values
+  ('00000000-0000-4000-c000-0000000000f1', '00000000-0000-4000-a000-00000000000a', 'owner'),
+  ('00000000-0000-4000-c000-0000000000f2', '00000000-0000-4000-a000-00000000000b', 'owner');
+insert into public.invitations (id, workspace_id, email, token_hash, invited_by, expires_at, accepted_at) values
+  ('00000000-0000-4000-d000-000000000001', '00000000-0000-4000-c000-0000000000f1', 'q1@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000002', '00000000-0000-4000-c000-0000000000f1', 'q2@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000003', '00000000-0000-4000-c000-0000000000f1', 'q3@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000004', '00000000-0000-4000-c000-0000000000f1', 'q4@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000005', '00000000-0000-4000-c000-0000000000f1', 'q5@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000006', '00000000-0000-4000-c000-0000000000f1', 'q6@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000007', '00000000-0000-4000-c000-0000000000f2', 'q1@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() - interval '1 minute', null),
+  ('00000000-0000-4000-d000-000000000008', '00000000-0000-4000-c000-0000000000f2', 'q1@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', now());
+
+create function pg_temp.exists_user(p_id uuid) returns boolean language sql as
+  $$ select exists (select 1 from auth.users where id = p_id) $$;
+
+-- 1-5. The functions.
+select is((select prosecdef from pg_proc where oid = 'public.clear_unconfirmed_signup(uuid)'::regprocedure), true,
+  'clear_unconfirmed_signup is security definer');
+select is((select proconfig from pg_proc where oid = 'public.clear_unconfirmed_signup(uuid)'::regprocedure),
+  array['search_path=""'], 'clear_unconfirmed_signup has an empty search_path');
+select ok(has_function_privilege('authenticated', 'public.clear_unconfirmed_signup(uuid)', 'execute')
+      and not has_function_privilege('anon', 'public.clear_unconfirmed_signup(uuid)', 'execute'),
+  'authenticated, not anon, can execute clear_unconfirmed_signup');
+select ok(not has_function_privilege('authenticated', 'private.has_open_invitation(text)', 'execute')
+      and not has_function_privilege('anon', 'private.has_open_invitation(text)', 'execute'),
+  'the API roles cannot execute has_open_invitation');
+select is((select provolatile from pg_proc where oid = 'private.has_open_invitation(text)'::regprocedure), 'v'::"char",
+  'has_open_invitation is volatile (a fresh snapshot when a waiting delete re-checks a row)');
+
+-- 6-9. Refused: anon, another workspace's owner, an expired or accepted invitation.
+set local role anon;
+select set_config('request.jwt.claims', '{"role":"anon"}', true);
+select throws_ok($$ select public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000001') $$,
+  '42501', null, 'anon cannot run the check');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000b","role":"authenticated"}', true);
+select throws_ok($$ select public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000001') $$,
+  '42501', 'not_allowed', 'another workspace''s owner is refused');
+select throws_ok($$ select public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000007') $$,
+  '42501', 'not_allowed', 'an expired invitation is refused');
+select throws_ok($$ select public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000008') $$,
+  '42501', 'not_allowed', 'an accepted invitation is refused');
+
+-- 10-16. The owner's check deletes only the unconfirmed, never-signed-in account with a password.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
+select is(public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000001'), 1,
+  'an unconfirmed sign-up with the address is deleted (returns 1)');
+select is(public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000001'), 0,
+  'a second check finds nothing (returns 0)');
+select is(public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000005'), 1,
+  'a sign-up the invite already reused is deleted too, matched without case');
+select is(public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000002')
+        + public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000003')
+        + public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000004')
+        + public.clear_unconfirmed_signup('00000000-0000-4000-d000-000000000006'), 0,
+  'the other checks delete nothing');
+reset role;
+select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000001')
+      and not pg_temp.exists_user('00000000-0000-4000-b000-000000000005'),
+  'the two sign-ups are gone');
+select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000002'),
+  'the invite email''s own account (no password) stays, so its link keeps working');
+select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000003')
+      and pg_temp.exists_user('00000000-0000-4000-b000-000000000004')
+      and pg_temp.exists_user('00000000-0000-4000-b000-000000000006'),
+  'confirmed or signed-in accounts stay');
+
+-- 17. The cleanup still keeps an account whose address has an open invitation.
+select is(private.delete_unused_invited_users('q2@example.test'), 0,
+  'the cleanup keeps q2 while its invitation is open');
+
+select * from finish();
+rollback;

@@ -10,7 +10,7 @@ import { safeNext } from "@/lib/auth/redirect";
 import { startedFromEmailedLink } from "@/lib/auth/session";
 import type { FormState } from "@/lib/auth/types";
 import { answer, field } from "@/lib/form-answer";
-import { inviteErrorCode, tokenFromInviteLink } from "@/lib/invites";
+import { inviteErrorCode, newInviteCookieName, tokenFromInviteLink } from "@/lib/invites";
 import { isHttps } from "@/lib/http";
 import { hardenCookie, passwordChangeCookieName } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
@@ -66,6 +66,9 @@ async function endSession(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { error } = await supabase.auth.signOut({ scope: "local" });
   if (error) logAuthError("logout", error);
   await requirePasswordChange(null);
+  // The owner's new invite link (shown for 5 minutes) goes with the session.
+  const secure = isHttps(await headers());
+  (await cookies()).set(newInviteCookieName(secure), "", { ...hardenCookie({}, secure), sameSite: "strict", maxAge: 0 });
 }
 
 // Flags the session that `accessToken` belongs to. Without a session id the flag couldn't be

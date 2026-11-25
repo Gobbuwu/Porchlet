@@ -116,10 +116,10 @@ select results_eq(
   $$ select p.oid::regprocedure::text
        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public' and has_function_privilege('authenticated', p.oid, 'execute') order by 1 $$,
-  $$ values ('accept_invitation(text)'), ('create_invitation(uuid,text)'), ('create_workspace(text)'),
+  $$ values ('accept_invitation(text)'), ('clear_unconfirmed_signup(uuid)'), ('create_invitation(uuid,text)'), ('create_workspace(text)'),
             ('is_instance_admin()'), ('list_workspace_members(uuid)'), ('rate_limit_release(text,bigint[])'),
             ('rate_limit_take(text,text,text[],integer[],integer[])') $$,
-  'authenticated can execute exactly the four M2 RPCs, is_instance_admin (ADR 0025) and the two limiter functions in public');
+  'authenticated can execute exactly the four M2 RPCs, is_instance_admin (ADR 0025), clear_unconfirmed_signup (ADR 0024) and the two limiter functions in public');
 select ok(not has_function_privilege('authenticated', 'private.is_owner(uuid)', 'execute'),
   'authenticated cannot execute private.is_owner (used only inside the RPCs)');
 

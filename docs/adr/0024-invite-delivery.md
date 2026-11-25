@@ -4,7 +4,7 @@
 
 ## Context
 
-M2 PR 3 builds the invite UI on PR 1's RPCs. D2 measured Supabase's side; building it raised six more questions. Measured on the local stack (Supabase CLI 3.2.0, `supabase/gotrue:v2.198.0`, `supabase/postgres:17.12.0.000`, Mailpit v1.31.3, Next.js 16.4.6 `next start`, Playwright 1.65.1 with Chromium 1243, Node 22.23.5, Linux cloud container), with throwaway scripts against the stack:
+M2 PR 3 builds the invite UI on PR 1's RPCs. D2 measured Supabase's side; building it raised six more questions, and `/review-critical` a seventh. Measured on the local stack (Supabase CLI 3.2.0, `supabase/gotrue:v2.198.0`, `supabase/postgres:17.12.0.000`, Mailpit v1.31.3, Next.js 16.4.6 `next start`, Playwright 1.65.1 with Chromium 1243, Node 22.23.5, Linux cloud container), with throwaway scripts against the stack:
 
 | # | Measurement | Result |
 |---|---|---|
@@ -19,6 +19,10 @@ M2 PR 3 builds the invite UI on PR 1's RPCs. D2 measured Supabase's side; buildi
 | M8 | How long the invite email's sign-in part lasts (`invited_at` and `confirmation_sent_at` moved back) | 9 minutes: works; 11 minutes: `403 otp_expired`. It follows `otp_expiry` (600 s in `config.toml`, ASVS 5.0.0 6.5.5; 3600 s by default on hosted), not the invitation's 7 days |
 | M9 | An address signs up (not confirmed yet), then is invited | `200`; Supabase Auth reuses that account and sets `invited_at` on it; the password hash the person chose stays (60 characters). An account an invite email created has none (0) |
 | M10 | The cleanup's lookup with 10,000 accounts | 1.0 to 2.2 ms a call (3 calls), a sequential scan (0.6 ms): `lower(email)` has no index without `instance_id`. Supabase Auth stores addresses lower-cased (measured: `M4-Mixed-…@Example.TEST` stored lower case), but rows written another way may not be, so `lower()` stays |
+| M11 | An address signs up with password P (not confirmed), then is invited, then the invite email's button is pressed | The invite reuses that account (M9) and the press confirms it: P then logs in (`/auth/v1/token`, 200). Found by `/review-critical` (section 7) |
+| M12 | An invite is pending, the address signs up with password P after 61 s, then the invite email's button is pressed | No password is stored (`encrypted_password` empty), the email's link answers `403 otp_expired`, and P answers `invalid_credentials` |
+| M13 | After M11, the invited person sets a password | The other login's refresh token answers `refresh_token_not_found` and P `invalid_credentials`; its access token gets 403 from `/auth/v1/user` but 200 from PostgREST until it expires (`jwt_expiry`, 3600 s) |
+| M14 | The cleanup waits on an invited account's row lock (two sessions) while a new invitation for the address commits | With the open-invitation check written in the delete, the delete re-checked the row under its old snapshot and deleted the account; with the check in a volatile function, it kept it (`scripts/ci/db-race-check.sh` check 5, run both ways) |
 
 ## 1. Who sends the email, and with what key
 
@@ -72,6 +76,8 @@ The invitee's own link, `/invite?token=…`, still carries the token in its URL 
 
 While Supabase's invited account exists, the person's own sign-up keeps no usable password (M2). D2 asked that revoking and expiry delete it.
 
+Gobbu chose A on 2026-11-25 (13:56 UTC). Applied on `porchlet-test` the same day (M2.md section 10, Hosted).
+
 | Option | Cost | Coverage |
 |---|---|---|
 | **A. In the database: an after-delete trigger on `invitations`, and an hourly Supabase Cron (`pg_cron`) job, both calling `private.delete_unused_invited_users()` (chosen)** | Migration `20261125030000_invite_cleanup.sql` (an index, two definer functions, a trigger, the job); `070_invite_cleanup.test.sql` (25 tests); `pg_cron` enabled (on hosted: `create extension pg_cron with schema pg_catalog`, supabase.com/docs/guides/cron/install) | Every way an invitation goes away (the owner's delete, a workspace cascade) and expiry (within the hour). Atomic with a concurrent confirmation (M7). No secret key. Deletes by SQL, which Supabase's docs allow ("You may delete users directly or via the management console", supabase.com/docs/guides/auth/managing-user-data); Supabase Auth writes no audit-log entry for it |
@@ -82,6 +88,19 @@ Only accounts nobody used are deleted: invited, never confirmed, never signed in
 ## 6. Testing the hourly cap without breaking the other tests
 
 The cap (20 per owner per hour, T7) is the only limit on invite emails (D2), and every E2E test acts as the one instance admin. `e2e/invite-cap.spec.ts` uses up the admin's hour, so it runs in its own Playwright project, `<browser>-cap`, which depends on `<browser>`: CI runs `--project=<browser> --project=<browser>-cap`. It sends through `create_invitation` (no email) across two workspaces until the database refuses, then shows the message on the page. Locally, run `scripts/e2e/make-admin.sh` again before each E2E run (a fresh admin, a fresh hour).
+
+## 7. An earlier sign-up with the invited address (found by `/review-critical`)
+
+Supabase's invite email reuses an unconfirmed account that a sign-up made, password included (M9), and pressing the email's button confirms it (M11). Anyone who knows a client's address could sign up with it before the owner invites it, and then log in with their own password once the client has joined. Only a password the invited person sets should ever open that account.
+
+| Option | Coverage |
+|---|---|
+| **Before the email, delete the address's unconfirmed, never-signed-in account that has a password; check again after it (chosen by Gobbu, 2026-11-25)** | The invite then makes a fresh account with no password. A sign-up after the invite stores no password (M12); one in the moment between the check and the email is deleted by the second check, which leaves the email's link signing nobody in, and the owner is told the email failed and given the link to copy. A person's own unfinished sign-up is replaced by the invite (its confirmation link stops working; the invite email gets them in) |
+| Accept the invitation only after the new password is saved at `/reset` | The other password still logs in between the press and the new password, and that access token keeps reading the workspace for up to an hour after it (M13) |
+
+`public.clear_unconfirmed_signup(invitation_id)` (security definer, owner of an open invitation only) does the delete; the invite action calls it before and after `sendInviteEmail`, and sends no email when the first call fails. An invite email's own account (no password), and any confirmed or signed-in account, stay. Migration `20261125040000_invite_account_check.sql`; `080_invite_account_check.test.sql` (17 tests) and the E2E test "someone's earlier sign-up with the address is replaced…" (fails without the first call: P logged in, 200).
+
+The same review found that the cleanup could delete an account being invited again at that moment: its delete waited on the row lock, then re-checked under a snapshot from before the new invitation (M14). The open-invitation check is now `private.has_open_invitation()`, a volatile function, whose query takes a fresh snapshot ("Function Volatility Categories" in the PostgreSQL docs).
 
 ## Consequences
 

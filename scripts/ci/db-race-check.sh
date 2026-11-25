@@ -7,7 +7,10 @@
 #      so only the workspace row lock keeps them in order);
 #   3. two parallel create_invitation calls by one owner in two workspaces, with 19 invitations
 #      made in the last hour: exactly one succeeds, the other gets hourly_invitation_limit;
-#   4. create_invitation refuses repeatable read (its counts would come from an old snapshot).
+#   4. create_invitation refuses repeatable read (its counts would come from an old snapshot);
+#   5. the invite cleanup waiting on an account's row lock (Supabase Auth updating it for a new
+#      invite) keeps the account when that new invitation committed while it waited (ADR 0024
+#      section 7: the open-invitation check takes a fresh snapshot).
 # Session 1 holds its transaction open for 2 seconds after its call. Session 2 starts only once
 # session 1 is in that sleep (seen in pg_stat_activity), so session 1 already holds its locks, and
 # each check also requires that session 2 was seen waiting on a lock: a slow runner can't turn the
@@ -25,6 +28,7 @@ count() { cat "${@:2}" | grep -cE -- "$1" || true; } # matching lines across fil
 owner=00000000-0000-4000-a000-0000000000aa
 owner2=00000000-0000-4000-a000-0000000000ab
 invitee=00000000-0000-4000-a000-0000000000cc
+reinvited=00000000-0000-4000-a000-0000000000dd
 ws=00000000-0000-4000-c000-0000000000aa
 ws2=00000000-0000-4000-c000-0000000000ab
 as_user() { # $1 user id, $2 SQL, $3 seconds to hold the transaction, $4 application_name
@@ -63,7 +67,7 @@ race() { # $1 user, $2 SQL for session 1, $3 user, $4 SQL for session 2, $5 $6 o
 delete_rows() {
   sql "delete from public.workspaces where id in ('$ws', '$ws2');
        delete from private.invitation_sends where user_id in ('$owner', '$owner2');
-       delete from auth.users where id in ('$owner', '$owner2', '$invitee');" >/dev/null
+       delete from auth.users where id in ('$owner', '$owner2', '$invitee', '$reinvited');" >/dev/null
 }
 trap 'delete_rows || true; rm -rf "$work"' EXIT
 delete_rows
@@ -130,5 +134,32 @@ SQL
 )
 check "create_invitation refuses repeatable read" \
   "$(grep -q 'create_invitation needs read committed, not repeatable read' <<<"$rr" && echo true)" "$rr"
+
+# 5. The cleanup against a re-invite. Session 1 stands in for Supabase Auth: it holds the account's
+# row lock for 2 seconds, as its update for a new invite would. Session 2 runs the cleanup, which
+# starts while the address has only an expired invitation and waits on that lock. Meanwhile the
+# new invitation commits. When session 1 ends, the cleanup re-checks the row and must keep it.
+sql "delete from public.invitations where workspace_id in ('$ws', '$ws2');
+     insert into auth.users (id, email, invited_at) values ('$reinvited', 'race-reinvited@example.test', now());
+     insert into public.invitations (workspace_id, email, token_hash, invited_by, expires_at)
+       values ('$ws', 'race-reinvited@example.test', extensions.digest('race-old', 'sha256'), '$owner', now() - interval '1 minute');" >/dev/null
+PGAPPNAME=porchlet-race-s1 psql "$db" -X -q -tA -v ON_ERROR_STOP=1 >"$work/r1" 2>&1 <<SQL &
+begin;
+update auth.users set invited_at = now() where id = '$reinvited';
+select pg_sleep(2);
+commit;
+SQL
+wait_for porchlet-race-s1 "state = 'active' and query like '%pg_sleep(2)%'" \
+  || { echo "FAIL session 1 never reached its sleep"; exit 1; }
+PGAPPNAME=porchlet-race-s2 psql "$db" -X -q -tA -v ON_ERROR_STOP=1 >"$work/r2" 2>&1 \
+  -c "select 'deleted=' || private.delete_unused_invited_users('race-reinvited@example.test');" &
+if wait_for porchlet-race-s2 "wait_event_type = 'Lock'"; then waited=waited; else waited=did-not-wait; fi
+sql "insert into public.invitations (workspace_id, email, token_hash, invited_by)
+       values ('$ws2', 'race-reinvited@example.test', extensions.digest('race-new', 'sha256'), '$owner');" >/dev/null
+wait
+kept=$(sql "select count(*) from auth.users where id = '$reinvited'")
+check "cleanup waiting on a re-invited account sees the invitation committed meanwhile and keeps the account" \
+  "$([ "$waited" = waited ] && [ "$kept" = 1 ] && grep -qx 'deleted=0' "$work/r2" && echo true)" \
+  "$waited kept=$kept; session 1: $(tr '\n' ' ' <"$work/r1"); session 2: $(tr '\n' ' ' <"$work/r2")"
 
 exit "$fail"

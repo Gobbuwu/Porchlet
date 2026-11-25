@@ -2,6 +2,7 @@
 
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { GENERIC_ERROR, type MessageCode } from "@/lib/auth/messages";
 import type { FormState } from "@/lib/auth/types";
 import { answer, field } from "@/lib/form-answer";
@@ -179,8 +180,14 @@ export async function inviteClient(_state: FormState, formData: FormData): Promi
     return answer(page, { error: code ?? GENERIC_ERROR, email }, form);
   }
   const link = inviteLink(origin, data.token);
-  const sent = await sendInviteEmail(email, link);
-  const notice = sent === "sent" ? "invite-sent" : sent === "has-account" ? "invite-has-account" : "invite-email-failed";
+  // Before the email: an unconfirmed sign-up with the address is deleted, so the invite makes a
+  // fresh account. After it: one made in between kept its password, so it is deleted too, which
+  // leaves the email's link signing nobody in (ADR 0024 section 7). A failed check sends no email.
+  const before = await clearUnconfirmedSignup(supabase, data.invitation_id);
+  const sent = before === null ? "failed" : await sendInviteEmail(email, link);
+  const checked = sent === "sent" && (await clearUnconfirmedSignup(supabase, data.invitation_id)) !== 0 ? "failed" : sent;
+  const notice =
+    checked === "sent" ? "invite-sent" : checked === "has-account" ? "invite-has-account" : "invite-email-failed";
   const secure = isHttps(await headers());
   (await cookies()).set(newInviteCookieName(secure), `${workspaceId}.${data.token}`, {
     ...hardenCookie({}, secure),
@@ -188,6 +195,19 @@ export async function inviteClient(_state: FormState, formData: FormData): Promi
     maxAge: NEW_INVITE_MAX_AGE,
   });
   redirect(`${page}?notice=${notice}`);
+}
+
+// Deletes the invitation's address's unconfirmed, never-used account that has a password: someone
+// signed up with the address, and the invite would keep their password (ADR 0024 section 7).
+// Returns how many accounts were deleted, or null when the check failed.
+async function clearUnconfirmedSignup(supabase: SupabaseClient, invitationId: string): Promise<number | null> {
+  const { data, error } = await supabase.rpc("clear_unconfirmed_signup", { p_invitation_id: invitationId });
+  if (error || typeof data !== "number") {
+    console.warn(`invite account check failed: code=${error?.code}`);
+    return null;
+  }
+  if (data > 0) console.warn("invite account check: deleted an unconfirmed sign-up with the invited address");
+  return data;
 }
 
 // An owner withdraws an invitation (the owners' delete policy). A trigger then deletes the account
