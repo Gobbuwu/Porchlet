@@ -12,10 +12,11 @@
 --       address, so the person who confirms it is the address's owner.
 --
 -- 2. The cleanup no longer keeps an invited account that has a password: since 1a, such an
---    account is an unconfirmed sign-up that the invite reused (a sign-up in the moment before the
---    email), and Gobbu approved deleting unconfirmed sign-ups through the invite path (2026-11-25,
+--    account is an unconfirmed sign-up that an invite reused (a sign-up in the moment before the
+--    email, or an invite sent from the Supabase dashboard, which Porchlet doesn't use), and Gobbu approved deleting unconfirmed sign-ups through the invite path (2026-11-25,
 --    M2.md section 10). The hourly job acts only on addresses an unaccepted Porchlet invitation
---    names, so an address whose only rows were accepted is left alone.
+--    names (open or expired), so an address whose only rows were accepted is left alone; a
+--    dashboard invite of an address with such a row is treated as Porchlet's.
 --
 -- 3. The cleanup's "no open invitation" check moves into a volatile function. A delete that waits on
 --    the account's row lock (Supabase Auth updating it for a new invite) re-checks the row under the

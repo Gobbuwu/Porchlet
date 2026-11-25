@@ -6,7 +6,7 @@
 -- Migration 20261125040000_invite_account_check.sql.
 -- Covers: public.invitations
 begin;
-select plan(27);
+select plan(28);
 
 -- A owns X, B owns Y. Q* are accounts with each invitation's address.
 insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_at) values
@@ -23,7 +23,8 @@ insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_
   ('00000000-0000-4000-b000-000000000009', 'q9@example.test', null, now(), null),    -- invited outside Porchlet, with a password
   ('00000000-0000-4000-b000-000000000010', 'q10@example.test', null, now(), null),   -- invited by Porchlet, no password yet
   ('00000000-0000-4000-b000-000000000011', 'q11@example.test', null, now(), null),   -- invited by Porchlet, with a password
-  ('00000000-0000-4000-b000-000000000012', 'q12@example.test', null, now(), null);   -- only an accepted Porchlet row, then a dashboard invite
+  ('00000000-0000-4000-b000-000000000012', 'q12@example.test', null, now(), null),   -- only an accepted Porchlet row, then a dashboard invite
+  ('00000000-0000-4000-b000-000000000013', 'q13@example.test', null, now(), null);   -- an accepted row and an expired one
 update auth.users set encrypted_password = extensions.crypt('someone-elses-password', extensions.gen_salt('bf'))
  where id in ('00000000-0000-4000-b000-000000000001', '00000000-0000-4000-b000-000000000003',
               '00000000-0000-4000-b000-000000000004', '00000000-0000-4000-b000-000000000005',
@@ -48,7 +49,9 @@ insert into public.invitations (id, workspace_id, email, token_hash, invited_by,
   ('00000000-0000-4000-d000-000000000009', '00000000-0000-4000-c000-0000000000f2', 'q7@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
   ('00000000-0000-4000-d000-000000000010', '00000000-0000-4000-c000-0000000000f2', 'q10@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
   ('00000000-0000-4000-d000-000000000011', '00000000-0000-4000-c000-0000000000f2', 'q11@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
-  ('00000000-0000-4000-d000-000000000012', '00000000-0000-4000-c000-0000000000f2', 'q12@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() - interval '1 day', now() - interval '2 days');
+  ('00000000-0000-4000-d000-000000000012', '00000000-0000-4000-c000-0000000000f2', 'q12@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() - interval '1 day', now() - interval '2 days'),
+  ('00000000-0000-4000-d000-000000000013', '00000000-0000-4000-c000-0000000000f1', 'q13@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() - interval '1 day', now() - interval '2 days'),
+  ('00000000-0000-4000-d000-000000000014', '00000000-0000-4000-c000-0000000000f2', 'q13@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() - interval '1 minute', null);
 
 create function pg_temp.exists_user(p_id uuid) returns boolean language sql as
   $$ select exists (select 1 from auth.users where id = p_id) $$;
@@ -139,9 +142,13 @@ delete from public.invitations where id = '00000000-0000-4000-d000-000000000011'
 select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000011'),
   'withdrawing deletes an unused invited account even when it has a password');
 
--- 26-27. An address whose only Porchlet invitation was accepted: the hourly job leaves its
--- unconfirmed account alone, and confirming keeps its password (a dashboard invite's case).
-select is(private.delete_unused_invited_users(), 0, 'the hourly job deletes nothing here');
+-- 26-28. The hourly job and an accepted invitation: an address whose only Porchlet invitation was
+-- accepted keeps its unconfirmed account (and its password when confirmed: a dashboard invite's
+-- case); one that also has an expired unaccepted invitation loses it.
+select is(private.delete_unused_invited_users(), 1, 'the hourly job deletes one account here (q13)');
+select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000013')
+      and pg_temp.exists_user('00000000-0000-4000-b000-000000000012'),
+  'an address with an expired unaccepted invitation loses its unused account even beside an accepted one; one with only an accepted row keeps it');
 update auth.users set email_confirmed_at = now() where id = '00000000-0000-4000-b000-000000000012';
 select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-b000-000000000012' and coalesce(encrypted_password, '') <> ''),
   'an account only an accepted Porchlet invitation names keeps its password when confirmed');
