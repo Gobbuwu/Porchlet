@@ -1,6 +1,6 @@
 # 0013. Security response headers
 
-- Status: Proposed (2026-11-23); accepted when Gobbu merges the PR that adds it
+- Status: Accepted (PR 8 merged 2026-11-23 as 7836836)
 
 ## Context
 

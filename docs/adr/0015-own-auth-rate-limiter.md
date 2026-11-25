@@ -1,6 +1,6 @@
 # 0015. Porchlet counts auth attempts per visitor IP in Postgres
 
-- Status: Proposed (2026-11-23); accepted when the M1 auth PR merges
+- Status: Accepted (PR 10 merged 2026-11-24 as f1cd5b5). How an attempt is counted was changed by [ADR 0022](0022-atomic-rate-limit-take.md)
 
 ## Context
 

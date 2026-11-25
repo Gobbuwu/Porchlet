@@ -11,10 +11,10 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0005](0005-secret-key-two-server-routes.md) | Secret key used in two server routes only | Accepted |
 | [0006](0006-inserts-through-security-definer-rpcs.md) | Workspaces, memberships and invitations are created only through security definer functions | Accepted |
 | [0011](0011-owasp-asvs-level-2.md) | Secure-coding standard: OWASP ASVS 5.0.0 Level 2 | Accepted |
-| [0012](0012-ci-pipeline.md) | CI pipeline: jobs, tools and lockdown | Proposed (PR 2) |
-| [0013](0013-security-headers.md) | Security response headers | Proposed |
-| [0014](0014-server-side-auth.md) | Auth on the server, HttpOnly session cookies, nonce CSP | Proposed (M1 auth PR) |
-| [0015](0015-own-auth-rate-limiter.md) | Porchlet counts auth attempts per visitor IP in Postgres | Proposed (M1 auth PR) |
+| [0012](0012-ci-pipeline.md) | CI pipeline: jobs, tools and lockdown | Accepted |
+| [0013](0013-security-headers.md) | Security response headers | Accepted |
+| [0014](0014-server-side-auth.md) | Auth on the server, HttpOnly session cookies, nonce CSP | Accepted |
+| [0015](0015-own-auth-rate-limiter.md) | Porchlet counts auth attempts per visitor IP in Postgres | Accepted (amended by 0022) |
 | [0016](0016-held-back-dependency-majors.md) | Hold back @types/node and TypeScript majors; take ESLint 10 | Accepted |
 | [0017](0017-rls-on-private-tables.md) | Row level security on every private table, with no policies | Accepted |
 | [0018](0018-native-form-posts-redirect-with-message.md) | Native form posts get their message through a redirect | Accepted |
