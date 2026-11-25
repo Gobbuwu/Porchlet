@@ -266,10 +266,12 @@ content_path = "./supabase/templates/confirmation.html"
 subject = "Reset your Porchlet password"
 content_path = "./supabase/templates/recovery.html"
 
-# Uncomment to customize email template
-# [auth.email.template.invite]
-# subject = "You have been invited"
-# content_path = "./supabase/templates/invite.html"
+# The invite link carries the Porchlet invitation link in `invite` (the redirectTo the invite
+# action passes, which Supabase Auth URL-encodes here and replaces with the site URL if its host
+# isn't allowed); /auth/confirm takes only the token from it (ADR 0024).
+[auth.email.template.invite]
+subject = "You're invited to a Porchlet workspace"
+content_path = "./supabase/templates/invite.html"
 
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]

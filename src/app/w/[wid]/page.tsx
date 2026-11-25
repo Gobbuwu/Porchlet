@@ -4,14 +4,24 @@ import { notFound, redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
 import { messageText } from "@/lib/auth/messages";
 import { formStateFromParams } from "@/lib/auth/types";
+import { inviteLink, isInviteToken, siteOrigin } from "@/lib/invites";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid, workspacePage } from "@/lib/workspaces";
-import { createProject, leaveWorkspace, removeMember, renameProject, setProjectStatus } from "../actions";
+import {
+  createProject,
+  inviteClient,
+  leaveWorkspace,
+  removeMember,
+  renameProject,
+  revokeInvitation,
+  setProjectStatus,
+} from "../actions";
 
 export const metadata: Metadata = { title: "Workspace · Porchlet" };
 
 type Project = { id: string; name: string; status: "active" | "archived" };
 type Member = { userId: string; role: "owner" | "client"; name: string; email?: string };
+type Invitation = { id: string; email: string; expires_at: string };
 
 // One workspace: its projects and members. Everything shown comes through RLS as the signed-in
 // user (ADR 0004): a workspace they don't belong to looks the same as one that doesn't exist,
@@ -36,7 +46,13 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
   if (loadError) throw new Error(`workspace page failed: code=${loadError.code}`);
   if (!workspace.data || !membership.data) notFound();
   const owner = membership.data.role === "owner";
-  const members = await loadMembers(supabase, wid, owner);
+  const [members, invitations] = await Promise.all([
+    loadMembers(supabase, wid, owner),
+    owner ? loadInvitations(supabase, wid) : Promise.resolve([]),
+  ]);
+  // The link of an invitation just made (inviteClient's redirect), shown once to copy (ADR 0024).
+  const origin = siteOrigin();
+  const newLink = owner && origin && isInviteToken(query.invite) ? inviteLink(origin, query.invite) : null;
   const list = (projects.data ?? []) as Project[];
   const active = list.filter((p) => p.status === "active");
   const archived = list.filter((p) => p.status === "archived");
@@ -50,6 +66,8 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
           ...active.flatMap((p) => [`rename-${p.id}`, `status-${p.id}`]),
           ...archived.map((p) => `status-${p.id}`),
           ...(members ?? []).filter((m) => m.userId !== uid).map((m) => `member-${m.userId}`),
+          "invite",
+          ...(invitations ?? []).map((i) => `invitation-${i.id}`),
         ]
       : ["leave"],
   );
@@ -72,6 +90,14 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
       {pageError ? (
         <p role="alert" className="error">
           {pageError}
+        </p>
+      ) : null}
+      {newLink ? (
+        <p>
+          <label>
+            Invite link
+            <input readOnly value={newLink} className="wide" />
+          </label>
         </p>
       ) : null}
 
@@ -185,7 +211,47 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
             ))}
           </ul>
         )}
-        {owner ? null : (
+        {owner ? (
+          <>
+            <h3>Invite a client</h3>
+            <p>
+              A new address gets an email with a link to join. An address that already has an account gets no email:
+              copy the link shown after you invite and send it yourself. Links work once and expire after 7 days.
+            </p>
+            <AuthForm action={inviteClient} initialState={formStateFromParams(query, "invite")} submitLabel="Send invitation">
+              {hidden}
+              <label>
+                Client&apos;s email
+                <input name="email" type="email" required maxLength={254} autoComplete="off" />
+              </label>
+            </AuthForm>
+            <h3>Open invitations</h3>
+            {invitations === null ? (
+              <p role="alert" className="error">
+                The invitations could not be loaded. Reload the page to try again.
+              </p>
+            ) : invitations.length === 0 ? (
+              <p>No open invitations.</p>
+            ) : (
+              <ul aria-label="Open invitations" className="items">
+                {invitations.map((i) => (
+                  <li key={i.id} aria-label={i.email}>
+                    <strong>{i.email}</strong>{" "}
+                    {new Date(i.expires_at) > new Date() ? `· expires ${i.expires_at.slice(0, 10)}` : "· expired"}
+                    <AuthForm
+                      action={revokeInvitation}
+                      initialState={formStateFromParams(query, `invitation-${i.id}`)}
+                      submitLabel="Withdraw invitation"
+                    >
+                      {hidden}
+                      <input type="hidden" name="invitation_id" value={i.id} />
+                    </AuthForm>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        ) : (
           <AuthForm action={leaveWorkspace} initialState={formStateFromParams(query, "leave")} submitLabel="Leave workspace">
             {hidden}
           </AuthForm>
@@ -193,6 +259,27 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
       </section>
     </main>
   );
+}
+
+// An owner's invitations not yet accepted, expired ones included (they hold no pending slot, and
+// withdrawing them tidies the list). Columns are named: token_hash isn't readable (PR 1).
+// null when the query failed.
+async function loadInvitations(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  workspaceId: string,
+): Promise<Invitation[] | null> {
+  const { data, error } = await supabase
+    .from("invitations")
+    .select("id, email, expires_at")
+    .eq("workspace_id", workspaceId)
+    .is("accepted_at", null)
+    .order("created_at")
+    .order("id");
+  if (error) {
+    console.warn(`invitation list failed: code=${error.code}`);
+    return null;
+  }
+  return data as Invitation[];
 }
 
 // Owners: every member with their email (list_workspace_members, owner-only). Clients: memberships

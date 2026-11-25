@@ -70,6 +70,8 @@ jobs:
         run: npm run lint
       - name: TypeScript
         run: npm run typecheck
+      - name: Secret key used only by the invite email (ADR 0005)
+        run: scripts/ci/check-secret-key-use.sh
 
   build:
     name: Build (Node ${{ matrix.node }})
@@ -179,7 +181,9 @@ jobs:
       - name: Build (in the Playwright image)
         run: scripts/ci/in-playwright-image.sh npm run build
       - name: Playwright
-        run: scripts/ci/in-playwright-image.sh npx playwright test --project=${{ matrix.browser }}
+        # The <browser>-cap project runs after <browser> (a Playwright project dependency): it uses
+        # up the admin's hourly invitation cap, which the other tests need (ADR 0024).
+        run: scripts/ci/in-playwright-image.sh npx playwright test --project=${{ matrix.browser }} --project=${{ matrix.browser }}-cap
       # On failure: each failed test's page snapshot, and the whole auth log (a 200-line tail once
       # began just after the failing request, PR 16). Workflow commands are paused while printing.
       - name: Failed tests' page snapshots (on failure)
