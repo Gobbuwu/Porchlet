@@ -130,7 +130,7 @@ test("withdrawing an invitation deletes the unused account, so the address can s
   await pageE.goto(emailLink);
   await pageE.getByRole("button", { name: "Accept invitation" }).click();
   await expect(pageE).toHaveURL(/\/login\?next=%2Finvite%3Ftoken%3D[0-9a-f]{64}&error=invite-email-link-used$/);
-  await expect(alertIn(pageE)).toHaveText(/^The sign-in part of this email's link was already used\./);
+  await expect(alertIn(pageE)).toHaveText(/^The sign-in part of this email's link has expired or was already used;/);
 
   // With the invited account deleted, the person's own sign-up keeps their password (T8).
   const before = await mailCount(e.email);
@@ -168,7 +168,7 @@ test("a pending invite, then the person's own sign-up: the email still gets them
   await pageF.goto(emailLink);
   await pageF.getByRole("button", { name: "Accept invitation" }).click();
   await expect(pageF).toHaveURL(/\/invite\?token=[0-9a-f]{64}&error=invite-email-link-used$/);
-  await expect(alertIn(pageF)).toHaveText(/^The sign-in part of this email's link was already used\./);
+  await expect(alertIn(pageF)).toHaveText(/^The sign-in part of this email's link has expired or was already used;/);
   await pageF.getByRole("button", { name: "Join workspace" }).click();
   await expect(pageF.getByRole("heading", { level: 1 })).toHaveText(name);
   await ctx.close();
@@ -239,4 +239,17 @@ test.describe("without JavaScript", () => {
     await expect(alertIn(page)).toHaveText(/^This address already has an open invitation\./);
     await expect(alertIn(page)).toHaveCount(1);
   });
+});
+
+test("the invite link shows only from this browser's own invite, not from a crafted URL", async ({ browser, page }) => {
+  const { wid } = await ownerWorkspace(page, "Invite crafted");
+  await inviteFromPage(page, newUser("own").email, EMAILED);
+  // Another browser of the same owner: no invite of its own, so a URL can't make it show a link.
+  const other = await browser.newContext();
+  const otherPage = await other.newPage();
+  await logInAsAdmin(otherPage);
+  await otherPage.goto(`/w/${wid}?notice=invite-sent&invite=${"a".repeat(64)}`);
+  await expect(otherPage.getByRole("status")).toHaveText(EMAILED);
+  await expect(otherPage.getByLabel("Invite link")).toHaveCount(0);
+  await other.close();
 });

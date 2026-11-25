@@ -55,9 +55,9 @@ export const MESSAGES = {
     "This invitation is for a different email address. Log out, then log in with the address it was sent to.",
   "invite-joined": "You joined the workspace. Choose a password to finish setting up your account.",
   "invite-not-joined":
-    "Your account is ready, but the invitation could not be used: it has expired, was withdrawn or was already used. Choose a password, then ask for a new invitation.",
+    "Your account is ready, but the invitation could not be used just now. Choose a password, then open the invite link again.",
   "invite-email-link-used":
-    "The sign-in part of this email's link was already used. Log in with the invited address to join. No password yet? Use \"Forgot password\" first, then open the email's link again.",
+    "The sign-in part of this email's link has expired or was already used; the invitation may still be open. Log in with the invited address to join. No password yet? Use \"Forgot your password?\" with that address first, then open the email's link again.",
   "joined-workspace": "You joined the workspace.",
 } as const;
 

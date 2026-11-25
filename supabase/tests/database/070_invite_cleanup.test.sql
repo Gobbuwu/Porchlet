@@ -3,7 +3,7 @@
 -- address is open in any workspace. Migration 20261125030000_invite_cleanup.sql.
 -- Covers: public.invitations
 begin;
-select plan(24);
+select plan(25);
 
 -- A owns X, B owns Y. P* are accounts an invite email made (invited, unconfirmed, never signed in)
 -- unless the comment says otherwise.
@@ -20,7 +20,12 @@ insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_
   ('00000000-0000-4000-b000-000000000008', 'p8@example.test', null, now(), null),     -- no invitation row
   ('00000000-0000-4000-b000-000000000009', 'P9@Example.TEST', null, now(), null),     -- mixed case
   ('00000000-0000-4000-b000-000000000010', 'p10@example.test', null, now(), null),
-  ('00000000-0000-4000-b000-000000000011', 'p11@example.test', now(), now(), null);   -- confirmed
+  ('00000000-0000-4000-b000-000000000011', 'p11@example.test', now(), now(), null),   -- confirmed
+  ('00000000-0000-4000-b000-000000000012', 'p12@example.test', null, now(), null);    -- own sign-up, then invited
+-- p12 signed up (unconfirmed, with the password they chose), then was invited, which sets
+-- invited_at on the same account (measured on GoTrue v2.198.0).
+update auth.users set encrypted_password = extensions.crypt('chosen-password', extensions.gen_salt('bf'))
+ where id = '00000000-0000-4000-b000-000000000012';
 insert into public.workspaces (id, name, created_by) values
   ('00000000-0000-4000-c000-0000000000f1', 'X', '00000000-0000-4000-a000-00000000000a'),
   ('00000000-0000-4000-c000-0000000000f2', 'Y', '00000000-0000-4000-a000-00000000000b'),
@@ -42,7 +47,8 @@ insert into public.invitations (id, workspace_id, email, token_hash, invited_by,
   ('00000000-0000-4000-d000-000000000017', '00000000-0000-4000-c000-0000000000f2', 'p7@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days'),
   ('00000000-0000-4000-d000-000000000009', '00000000-0000-4000-c000-0000000000f1', 'p9@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days'),
   ('00000000-0000-4000-d000-000000000010', '00000000-0000-4000-c000-0000000000f3', 'p10@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days'),
-  ('00000000-0000-4000-d000-000000000011', '00000000-0000-4000-c000-0000000000f1', 'p11@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() - interval '1 minute');
+  ('00000000-0000-4000-d000-000000000011', '00000000-0000-4000-c000-0000000000f1', 'p11@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() - interval '1 minute'),
+  ('00000000-0000-4000-d000-000000000013', '00000000-0000-4000-c000-0000000000f1', 'p12@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days');
 
 create function pg_temp.exists_user(p_id uuid) returns boolean language sql as
   $$ select exists (select 1 from auth.users where id = p_id) $$;
@@ -65,7 +71,7 @@ select results_eq(
   $$ values ('17 * * * *'::text, 'select private.delete_unused_invited_users()'::text) $$,
   'the hourly cleanup job is scheduled');
 
--- 7-14. An owner withdraws invitations through the API (the owners' delete policy).
+-- 7-15. An owner withdraws invitations through the API (the owners' delete policy).
 set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
 delete from public.invitations where id = '00000000-0000-4000-d000-000000000001';
@@ -74,6 +80,7 @@ delete from public.invitations where id = '00000000-0000-4000-d000-000000000003'
 delete from public.invitations where id = '00000000-0000-4000-d000-000000000004';
 delete from public.invitations where id = '00000000-0000-4000-d000-000000000005';
 delete from public.invitations where id = '00000000-0000-4000-d000-000000000009';
+delete from public.invitations where id = '00000000-0000-4000-d000-000000000013';
 -- A's delete of B's invitation is refused by RLS (no row), so it removes no account either.
 delete from public.invitations where id = '00000000-0000-4000-d000-000000000010';
 reset role;
@@ -92,8 +99,10 @@ select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000010')
   'another workspace''s owner deletes nothing, so no account goes either');
 select ok(pg_temp.exists_user('00000000-0000-4000-a000-00000000000a') and pg_temp.exists_user('00000000-0000-4000-a000-00000000000b'),
   'owners'' own accounts stay');
+select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000012'),
+  'an account the person signed up for themselves, invited before they confirmed, is never deleted');
 
--- 15-20. Expiry: the hourly job.
+-- 16-21. Expiry: the hourly job.
 select is(private.delete_unused_invited_users(), 1, 'the hourly job deletes one account (p6)');
 select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000006'),
   'an unused invited account whose invitations all expired is deleted');
@@ -106,13 +115,13 @@ select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000011'),
 select ok(exists (select 1 from public.invitations where id = '00000000-0000-4000-d000-000000000006'),
   'the expired invitation row itself stays for the owner to see');
 
--- 21-22. Deleting a workspace removes its invitations by cascade, and the trigger runs for them.
+-- 22-23. Deleting a workspace removes its invitations by cascade, and the trigger runs for them.
 delete from public.workspaces where id = '00000000-0000-4000-c000-0000000000f3';
 select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000010'),
   'a workspace deleted with its invitations deletes their unused invited accounts');
 select ok(pg_temp.exists_user('00000000-0000-4000-a000-00000000000b'), 'its owner stays');
 
--- 23-24. Deleting an accepted invitation removes no account.
+-- 24-25. Deleting an accepted invitation removes no account.
 update auth.users set email_confirmed_at = now(), last_sign_in_at = now() where id = '00000000-0000-4000-b000-000000000002';
 update public.invitations set accepted_at = now() where id = '00000000-0000-4000-d000-000000000012';
 update auth.users set email_confirmed_at = null, last_sign_in_at = null where id = '00000000-0000-4000-b000-000000000002';

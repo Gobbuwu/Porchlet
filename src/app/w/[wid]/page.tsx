@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { cookies, headers } from "next/headers";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
 import { messageText } from "@/lib/auth/messages";
 import { formStateFromParams } from "@/lib/auth/types";
-import { inviteLink, isInviteToken, siteOrigin } from "@/lib/invites";
+import { isHttps } from "@/lib/http";
+import { inviteLink, newInviteCookieName, newInviteToken, siteOrigin } from "@/lib/invites";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid, workspacePage } from "@/lib/workspaces";
 import {
@@ -50,9 +52,11 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
     loadMembers(supabase, wid, owner),
     owner ? loadInvitations(supabase, wid) : Promise.resolve([]),
   ]);
-  // The link of an invitation just made (inviteClient's redirect), shown once to copy (ADR 0024).
+  // The link of an invitation just made here (inviteClient's cookie), to copy (ADR 0024 section 4).
   const origin = siteOrigin();
-  const newLink = owner && origin && isInviteToken(query.invite) ? inviteLink(origin, query.invite) : null;
+  const secure = isHttps(await headers());
+  const newToken = owner ? newInviteToken((await cookies()).get(newInviteCookieName(secure))?.value, wid) : null;
+  const newLink = origin && newToken ? inviteLink(origin, newToken) : null;
   const list = (projects.data ?? []) as Project[];
   const active = list.filter((p) => p.status === "active");
   const archived = list.filter((p) => p.status === "archived");
@@ -216,7 +220,9 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
             <h3>Invite a client</h3>
             <p>
               A new address gets an email with a link to join. An address that already has an account gets no email:
-              copy the link shown after you invite and send it yourself. Links work once and expire after 7 days.
+              copy the link shown after you invite and send it yourself. An invitation works once and lasts 7 days; the
+              email&apos;s sign-in button works only for a short while, then the person uses &quot;Forgot your
+              password?&quot; first.
             </p>
             <AuthForm action={inviteClient} initialState={formStateFromParams(query, "invite")} submitLabel="Send invitation">
               {hidden}

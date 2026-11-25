@@ -222,8 +222,9 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   if (error) {
     logAuthError(`verify-${type}`, error);
     if (error.status === 429) return answer(page, { error: authErrorCode(error) });
-    // The sign-in part of an invite link stops working once the address has been confirmed some
-    // other way, for example by the person's own sign-up (measured, M2.md D2 and T8). The
+    // The sign-in part of an invite link lasts only otp_expiry (10 minutes in config.toml, 1 hour
+    // by default on hosted; the invitation lasts 7 days), and stops working once the address is
+    // confirmed some other way, such as the person's own sign-up (measured, ADR 0024). The
     // invitation itself may still be open, so the person can join from a session of that address.
     // Sent straight to the right page: a page's own redirect while it renders a Server Action's
     // redirect target shows the new page but leaves the old URL (measured, E2E).
@@ -243,9 +244,11 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
     // choose one before it can use the app, as a reset link's must (ADR 0023). It joins first, in
     // this POST, so nothing depends on carrying the token through the password page.
     const { error: acceptError } = await supabase.rpc("accept_invitation", { p_token: inviteToken });
-    if (acceptError && !inviteErrorCode(acceptError)) console.warn(`invite accept failed: code=${acceptError.code}`);
+    const acceptCode = acceptError ? inviteErrorCode(acceptError) : undefined;
+    if (acceptError && !acceptCode) console.warn(`invite accept failed: code=${acceptError.code}`);
     if (!(await flagSession(supabase, data.session?.access_token))) return answer(page, { error: "link-used" });
-    redirect(acceptError ? "/reset?error=invite-not-joined" : "/reset?notice=invite-joined");
+    // The reason the database gave, or a general one; the account works either way.
+    redirect(acceptError ? `/reset?error=${acceptCode ?? "invite-not-joined"}` : "/reset?notice=invite-joined");
   }
   // A reset link's session exists to set a new password, and Supabase Auth lets it do so without
   // the current one, so it can't open the app until it has (ADR 0023): otherwise the link would

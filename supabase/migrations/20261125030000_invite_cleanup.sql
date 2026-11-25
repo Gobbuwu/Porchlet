@@ -12,8 +12,10 @@
 create index invitations_email_idx on public.invitations (email);
 
 -- Deletes the accounts that only an invite email made and nobody has used: invited, never
--- confirmed, never signed in. Kept only while an invitation for the address is still pending
--- (in any workspace). With p_email, only that address (after its invitation was deleted); with
+-- confirmed, never signed in, no password. The password check matters: inviting an address whose
+-- own sign-up isn't confirmed yet sets invited_at on that account too (measured on GoTrue
+-- v2.198.0), and it keeps the password its owner chose. Kept only while an invitation for the
+-- address is still pending (in any workspace). With p_email, only that address (after its invitation was deleted); with
 -- null, every such account Porchlet invited whose invitations have all expired (the hourly job).
 -- A confirmed or signed-in account is never touched: those columns are checked in the delete
 -- itself, so an account confirmed at the same moment is re-checked and kept (read committed).
@@ -30,6 +32,7 @@ begin
    where u.invited_at is not null
      and u.email_confirmed_at is null
      and u.last_sign_in_at is null
+     and coalesce(u.encrypted_password, '') = ''
      and (case when p_email is null
                then exists (select 1 from public.invitations i where i.email = lower(u.email))
                else lower(u.email) = lower(p_email) end)

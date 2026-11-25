@@ -1,10 +1,13 @@
 "use server";
 
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { GENERIC_ERROR, type MessageCode } from "@/lib/auth/messages";
 import type { FormState } from "@/lib/auth/types";
 import { answer, field } from "@/lib/form-answer";
-import { inviteErrorCode, inviteLink, siteOrigin } from "@/lib/invites";
+import { isHttps } from "@/lib/http";
+import { inviteErrorCode, inviteLink, NEW_INVITE_MAX_AGE, newInviteCookieName, siteOrigin } from "@/lib/invites";
+import { hardenCookie } from "@/lib/supabase/config";
 import { sendInviteEmail } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { isUuid, nameProblem, workspacePage } from "@/lib/workspaces";
@@ -152,9 +155,9 @@ export async function leaveWorkspace(_state: FormState, formData: FormData): Pro
 // An owner invites an email address (ADR 0024). create_invitation runs as the owner, so the owner
 // check and both caps (20 pending per workspace, 20 per owner per hour; the only limit on invite
 // emails, M2.md D2) apply before anything is sent. Only then is the secret key used, for the email.
-// The page shows the link once, to copy: it is in the redirect's URL because the database keeps
-// only the token's hash. The link alone is no use to anyone else: accept_invitation also needs a
-// session of the invited address (threat T5).
+// The page shows the link to copy, from a short-lived HttpOnly cookie: the database keeps only the
+// token's hash, and the URL is no place for it (ADR 0024 section 4). The link alone is no use to
+// anyone else: accept_invitation also needs a session of the invited address (threat T5).
 export async function inviteClient(_state: FormState, formData: FormData): Promise<FormState> {
   const form = "invite";
   const workspaceId = field(formData, "workspace_id");
@@ -178,7 +181,13 @@ export async function inviteClient(_state: FormState, formData: FormData): Promi
   const link = inviteLink(origin, data.token);
   const sent = await sendInviteEmail(email, link);
   const notice = sent === "sent" ? "invite-sent" : sent === "has-account" ? "invite-has-account" : "invite-email-failed";
-  redirect(`${page}?${new URLSearchParams({ notice, invite: data.token })}`);
+  const secure = isHttps(await headers());
+  (await cookies()).set(newInviteCookieName(secure), `${workspaceId}.${data.token}`, {
+    ...hardenCookie({}, secure),
+    sameSite: "strict",
+    maxAge: NEW_INVITE_MAX_AGE,
+  });
+  redirect(`${page}?notice=${notice}`);
 }
 
 // An owner withdraws an invitation (the owners' delete policy). A trigger then deletes the account

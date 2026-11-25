@@ -28,6 +28,25 @@ export function siteOrigin(): string | null {
   return url.origin;
 }
 
+// The invitation just made, for its owner's page to show once to copy (ADR 0024 section 4): set
+// by inviteClient, HttpOnly, five minutes, "<workspace id>.<token>". In a cookie rather than the
+// URL, so the token reaches no request log or browser history, and a crafted URL can't make the
+// page show some other workspace's link as this one's.
+const NEW_INVITE_COOKIE = "porchlet-new-invite";
+export const NEW_INVITE_MAX_AGE = 5 * 60;
+
+export function newInviteCookieName(secure: boolean): string {
+  return secure ? `__Host-${NEW_INVITE_COOKIE}` : NEW_INVITE_COOKIE;
+}
+
+/** The token in the new-invite cookie when it is for `workspaceId`, else null. */
+export function newInviteToken(cookie: string | undefined, workspaceId: string): string | null {
+  if (!cookie) return null;
+  const dot = cookie.indexOf(".");
+  const token = cookie.slice(dot + 1);
+  return dot > 0 && cookie.slice(0, dot) === workspaceId && isInviteToken(token) ? token : null;
+}
+
 /** The link an invited person opens: /invite with the token. */
 export function inviteLink(origin: string, token: string): string {
   return `${origin}/invite?${new URLSearchParams({ token })}`;
