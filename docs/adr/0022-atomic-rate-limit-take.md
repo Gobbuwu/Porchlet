@@ -35,6 +35,7 @@ Option 1.
   - It refuses to run outside read committed: under repeatable read or serializable its count would use a snapshot taken before the wait. Measured: `rate_limit_take needs read committed, not repeatable read`. The app shows "Something went wrong" then (fails closed).
   - Hits older than an hour are deleted before any lock is taken, skipping rows another call is deleting, so the cleanup never waits while it holds a bucket lock.
 - An IPv4 address written as IPv6 (`::ffff:a.b.c.d`, as a dual-stack socket reports it) is counted as that IPv4 address. `rate_limit_hit` applied the IPv6 /64 rule to it, which put every such visitor in one `::/64` bucket (found by the code review of this change; checked in psql: `network(set_masklen('::ffff:203.0.113.5', 64))` is `::/64`).
+- A hit is stamped with the time after the lock wait (`clock_timestamp()`), and the window is counted from that time, so a call that waited isn't recorded as earlier than it was (found by /review-critical, read from code). A netmask in the IP is dropped, and the old IPv4-compatible form `::a.b.c.d` also counts as IPv4 (same review, checked with a probe).
 - `public.rate_limit_release(key, ids[])` gives hits back.
 - `public.rate_limit_hit` is dropped, so no code path can count in two steps again.
 - A login takes a slot in both failure buckets, then:

@@ -5,7 +5,7 @@
 -- outside read committed can't be tested here either: pgTAP runs inside a transaction that has
 -- already run queries, so its isolation level can no longer change.
 begin;
-select plan(30);
+select plan(34);
 
 -- Tests run in a transaction, so this replaces any key the local stack holds only until rollback.
 delete from private.rate_limit_key;
@@ -67,23 +67,35 @@ select public.rate_limit_take('test-key', '::ffff:198.51.100.7', '{mapped}', '{1
 select is(public.rate_limit_take('test-key', '198.51.100.7', '{mapped}', '{1}', '{600}'), '{}'::bigint[],
   'an IPv4-mapped address shares the IPv4 bucket');
 
--- 23. Junk in the IP becomes the 'unknown' bucket instead of an error.
+-- 23-24. A netmask is dropped, and the old IPv4-compatible form (::a.b.c.d) is its IPv4 address.
+select is(public.rate_limit_take('test-key', '::ffff:198.51.100.7/0', '{mapped}', '{1}', '{600}'), '{}'::bigint[],
+  'an IPv4-mapped address with a netmask still shares the IPv4 bucket');
+select is(public.rate_limit_take('test-key', '::198.51.100.7', '{mapped}', '{1}', '{600}'), '{}'::bigint[],
+  'an IPv4-compatible address shares the IPv4 bucket');
+
+-- 25. Junk in the IP becomes the 'unknown' bucket instead of an error.
 select is(cardinality(public.rate_limit_take('test-key', 'not an ip', '{junk}', '{1}', '{600}')), 1, 'an unparsable IP is counted as unknown');
 
--- 24-29. Bad arguments are refused.
+-- 26-32. Bad arguments are refused.
 select is(public.rate_limit_take('test-key', '203.0.113.1', array[repeat('x', 121)], '{3}', '{600}'), null, 'an over-long scope is refused');
 select is(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{3}', '{0}'), null, 'a zero window is refused');
 select is(public.rate_limit_take('test-key', '203.0.113.1', '{login}', '{0}', '{600}'), null, 'a zero limit is refused');
 select is(public.rate_limit_take('test-key', '203.0.113.1', '{a,b}', '{3}', '{600,600}'), null, 'arrays of different lengths are refused');
 select is(public.rate_limit_take('test-key', '203.0.113.1', '{a,a}', '{3,3}', '{600,600}'), null, 'a repeated scope is refused');
 select is(public.rate_limit_take('test-key', '203.0.113.1', '{}', '{}', '{}'), null, 'no rules is refused');
+select is(public.rate_limit_take('test-key', '203.0.113.1', '{a,NULL}', '{3,3}', '{600,600}'), null, 'a null scope is refused');
 
 reset role;
 
--- 30. Hits older than the window don't count.
+-- 33. Hits older than the window don't count.
 update private.rate_limit_hits set at = now() - interval '11 minutes' where bucket = 'v6|2001:db8:1:2::/64';
 select is(cardinality(public.rate_limit_take('test-key', '2001:db8:1:2::1', '{v6}', '{1}', '{600}')), 1,
   'hits outside the window are not counted');
+
+-- 34. A login gives its hit back after signing in, so authenticated can call release too.
+set local role authenticated;
+select is(public.rate_limit_release('test-key', array[0::bigint]), 0, 'authenticated can call release');
+reset role;
 
 select * from finish();
 rollback;

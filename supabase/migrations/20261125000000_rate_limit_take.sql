@@ -57,6 +57,7 @@ declare
   v_buckets text[];
   v_lock integer;
   v_ids bigint[];
+  v_now timestamptz;
 begin
   if not private.rate_limit_key_ok(p_key) then
     return null;
@@ -80,10 +81,14 @@ begin
   exception when others then
     v_ip := null;
   end;
-  -- An IPv4 address written as IPv6 (::ffff:a.b.c.d, as a dual-stack socket reports it) counts as
-  -- that IPv4 address; as IPv6 its /64 would be ::/64, one bucket for every such visitor.
+  -- A netmask in the value is dropped. An IPv4 address written as IPv6 (::ffff:a.b.c.d, as a
+  -- dual-stack socket reports it, or the old ::a.b.c.d form) counts as that IPv4 address; as IPv6
+  -- its /64 would be ::/64, one bucket for every such visitor. :: and ::1 stay IPv6.
+  v_ip := host(v_ip)::inet;
   if v_ip <<= '::ffff:0:0/96'::inet then
     v_ip := '0.0.0.0'::inet + (v_ip - '::ffff:0.0.0.0'::inet);
+  elsif v_ip <<= '::/96'::inet and v_ip > '::1'::inet then
+    v_ip := '0.0.0.0'::inet + (v_ip - '::'::inet);
   end if;
   v_who := coalesce(
     case when family(v_ip) = 6 then network(set_masklen(v_ip, 64))::text else host(v_ip) end,
@@ -100,17 +105,20 @@ begin
   for v_lock in select distinct hashtext(b) from unnest(v_buckets) b order by 1 loop
     perform pg_advisory_xact_lock(hashtext('porchlet.rate_limit'), v_lock);
   end loop;
+  -- The time after the wait, not now() (the transaction's start): a call that waited for the
+  -- lock must not record or count its hit as if it came earlier.
+  v_now := clock_timestamp();
 
   if exists (
     select 1 from unnest(v_buckets, p_limits, p_windows) as r (bucket, lim, win)
     where (select count(*) from private.rate_limit_hits h
-           where h.bucket = r.bucket and h.at > now() - make_interval(secs => r.win)) >= r.lim
+           where h.bucket = r.bucket and h.at > v_now - make_interval(secs => r.win)) >= r.lim
   ) then
     return '{}'::bigint[];
   end if;
 
   with ins as (
-    insert into private.rate_limit_hits (bucket) select unnest(v_buckets) returning id
+    insert into private.rate_limit_hits (bucket, at) select unnest(v_buckets), v_now returning id
   )
   select array_agg(id) into v_ids from ins;
   return v_ids;
