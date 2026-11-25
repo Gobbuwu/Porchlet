@@ -27,6 +27,7 @@ scripts/ci/db-race-check.sh                    # parallel invitation calls in tw
 # E2E: full stack minus unused services (keeps Auth, REST and Mailpit)
 npx supabase start -x realtime,storage-api,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 scripts/e2e/write-env.sh         # rewrites .env.local (URL, publishable key, RATE_LIMIT_KEY)
+scripts/e2e/make-admin.sh        # fresh instance admin for the workspace tests (.env.e2e-admin)
 scripts/ci/session-limit-check.sh  # session limits against the real Auth server
 npm run build && npx playwright test --project=chromium
 ```
