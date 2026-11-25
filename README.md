@@ -16,7 +16,7 @@ Needs Node 22 or later and Docker.
 npm ci
 npm run db:start              # local Supabase in Docker; prints local URLs and keys
 scripts/e2e/write-env.sh      # writes .env.local with the local URL and publishable key
-scripts/e2e/make-admin.sh     # a fresh local instance admin (may create workspaces), in .env.e2e-admin
+scripts/e2e/make-admin.sh     # a fresh local instance admin for E2E, in .env.e2e-admin (replaces the current one)
 npm run dev
 ```
 

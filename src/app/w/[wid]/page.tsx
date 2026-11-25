@@ -41,7 +41,20 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
   const active = list.filter((p) => p.status === "active");
   const archived = list.filter((p) => p.status === "archived");
   const notice = messageText(query.notice);
-  const pageError = query.form === undefined ? messageText(query.error) : undefined;
+  // The forms this page shows, by answer()'s key (ADR 0025). A message for any other form (one
+  // that is gone, such as a member already removed, or one this user doesn't get) shows at the top.
+  const formKeys = new Set(
+    owner
+      ? [
+          "create-project",
+          ...active.flatMap((p) => [`rename-${p.id}`, `status-${p.id}`]),
+          ...archived.map((p) => `status-${p.id}`),
+          ...(members ?? []).filter((m) => m.userId !== uid).map((m) => `member-${m.userId}`),
+        ]
+      : ["leave"],
+  );
+  const pageError =
+    typeof query.form === "string" && formKeys.has(query.form) ? undefined : messageText(query.error);
   const hidden = <input type="hidden" name="workspace_id" value={wid} />;
 
   return (
@@ -80,7 +93,7 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
                     <input type="hidden" name="project_id" value={p.id} />
                     <label>
                       New name
-                      <input name="name" required maxLength={120} defaultValue={p.name} autoComplete="off" />
+                      <input name="name" required defaultValue={p.name} autoComplete="off" />
                     </label>
                   </AuthForm>
                   <AuthForm
@@ -131,7 +144,7 @@ export default async function WorkspacePage({ params, searchParams }: PageProps<
               {hidden}
               <label>
                 Project name
-                <input name="name" required maxLength={120} autoComplete="off" />
+                <input name="name" required autoComplete="off" />
               </label>
             </AuthForm>
           </>

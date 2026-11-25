@@ -5,6 +5,8 @@
 # make-admin.sql, and writes its email and password to .env.e2e-admin (ignored by git, like
 # .env.local) for e2e/support/workspaces.ts. Local stack only: the stack's secret key is used for
 # this one call and never written.
+# There is one admin per instance, so this replaces the stack's current admin (make-admin.sql
+# prints a notice when it does); run make-admin.sql again to make your own account the admin.
 set -euo pipefail
 status=$(npx supabase status -o json)
 api=$(jq -er '.API_URL' <<<"$status")

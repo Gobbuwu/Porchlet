@@ -199,4 +199,23 @@ test.describe("without JavaScript", () => {
     await expect(plain.getByRole("alert")).toHaveText("Enter a project name of 1 to 120 characters.");
     await expect(alertIn(page)).toHaveCount(1);
   });
+
+  test("a refusal for a form that is gone shows at the top of the page", async ({ browser, page, context }) => {
+    const admin = await browser.newContext({ javaScriptEnabled: false });
+    const stale = await admin.newPage();
+    await logInAsAdmin(stale);
+    const wid = await createWorkspace(stale, uniqueName("Stale"));
+    const client = await signUpAndConfirm(page, "stale");
+    await joinAsClient(admin, context, wid, client.email);
+    await stale.reload();
+    // Removed from a second tab first, so the first tab's Remove button is for a member who is gone.
+    const other = await admin.newPage();
+    await other.goto(`/w/${wid}`);
+    await other.getByRole("listitem", { name: client.email }).getByRole("button", { name: "Remove from workspace" }).click();
+    await expect(other.getByRole("status")).toHaveText("Member removed.");
+    await stale.getByRole("listitem", { name: client.email }).getByRole("button", { name: "Remove from workspace" }).click();
+    await expect(stale).toHaveURL(/error=not-allowed&form=member-/);
+    await expect(alertIn(stale)).toHaveText("You can't do that in this workspace.");
+    await admin.close();
+  });
 });

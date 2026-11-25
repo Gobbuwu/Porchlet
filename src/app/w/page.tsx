@@ -27,12 +27,16 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/w">) 
     supabase.from("workspace_members").select("workspace_id, role").eq("user_id", uid),
     supabase.rpc("is_instance_admin"),
   ]);
-  const loadError = workspaces.error ?? memberships.error ?? admin.error;
+  const loadError = workspaces.error ?? memberships.error;
   if (loadError) console.warn(`workspaces list failed: code=${loadError.code}`);
+  // Without an answer the create form is left out; the list doesn't depend on it.
+  if (admin.error) console.warn(`admin check failed: code=${admin.error.code}`);
+  const isAdmin = admin.data === true;
   const list = workspaces.data ?? [];
   const roles = new Map((memberships.data ?? []).map((m) => [m.workspace_id, m.role]));
   const notice = messageText(params.notice);
-  const pageError = params.form === undefined ? messageText(params.error) : undefined;
+  // A message for a form this page doesn't show (ADR 0025) shows at the top instead.
+  const pageError = isAdmin && params.form === "create-workspace" ? undefined : messageText(params.error);
 
   return (
     <main className="narrow">
@@ -70,7 +74,7 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/w">) 
           ))}
         </ul>
       )}
-      {admin.data === true ? (
+      {isAdmin ? (
         <section aria-labelledby="new-workspace">
           <h2 id="new-workspace">New workspace</h2>
           <AuthForm
@@ -80,7 +84,7 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/w">) 
           >
             <label>
               Workspace name
-              <input name="name" required maxLength={80} autoComplete="off" />
+              <input name="name" required autoComplete="off" />
             </label>
           </AuthForm>
         </section>

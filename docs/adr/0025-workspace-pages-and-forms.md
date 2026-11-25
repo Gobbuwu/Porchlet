@@ -22,7 +22,7 @@ B: the function takes no arguments and names no one, so it tells a user nothing 
 
 ADR 0018's `answer()` redirects a native post back with `?error=<code>`. `/w/[wid]` has one form per project action and per member, so every form would show that message.
 
-Chosen: `answer(page, outcome, form)` also puts `form=<key>` in the URL (`create-project`, `rename-<project id>`, `status-<project id>`, `member-<user id>`, `leave`, `create-workspace`), and `formStateFromParams(params, key)` gives the message only to the form with that key. A message with no key (the action's ids didn't parse) shows once at the top of the page. `answer()` moved from the auth actions to `src/lib/form-answer.ts` so both action files use one copy. Planted case: ignoring the key fails all six workspace E2E tests (the notice and errors show twice).
+Chosen: `answer(page, outcome, form)` also puts `form=<key>` in the URL (`create-project`, `rename-<project id>`, `status-<project id>`, `member-<user id>`, `leave`, `create-workspace`), and `formStateFromParams(params, key)` gives the message only to the form with that key. A message whose key matches no form on the page shows once at the top instead: no key (the action's ids didn't parse), or a form that is gone or that this user doesn't get (a member already removed in another tab, a client's replay of an owner form). Each page builds the set of keys it renders for this. Tested: E2E "a refusal for a form that is gone shows at the top of the page"; planted case: showing the top message only when there is no key fails it. `answer()` moved from the auth actions to `src/lib/form-answer.ts` so both action files use one copy. Planted case: ignoring the key fails all six workspace E2E tests (the notice and errors show twice).
 
 ## 3. Success answers with a redirect on both paths
 
@@ -48,6 +48,7 @@ A, because the status is not what protects the data (RLS is, ADR 0004), and the 
 - The E2E admin: `scripts/e2e/make-admin.sh` creates a confirmed account through Supabase Auth's admin API with the local stack's secret key (used for that one call, never written; the script refuses a non-local API URL), runs `scripts/dev/make-admin.sql` on it, and writes its email and a random password to `.env.e2e-admin` (git-ignored). PR 3's planned CI grep for secret-key use (ADR 0005) must allow this file, as it must `scripts/ci/session-limit-check.sh`.
 - Clients get members' display names through `workspace_members` and `profiles` under RLS; owners get emails through `list_workspace_members` (decision D3).
 - No workspace rename UI: the policy exists (PR 1) but rename isn't in PR 2's scope.
+- Name inputs carry no `maxLength`: browsers count UTF-16 units, the database counts code points, so the hint would cut off valid names with emoji. The server's `nameProblem()` counts code points like the database.
 
 ## Consequences
 
