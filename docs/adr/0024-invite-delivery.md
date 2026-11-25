@@ -71,7 +71,7 @@ The database keeps only the token's hash (PR 1), so the link exists only in `cre
 | **A short-lived HttpOnly cookie bound to the workspace (chosen)** | Works with and without JavaScript; in no URL or log; a URL can't set it (E2E: a crafted `?invite=` shows no link; planted case: reading the query again fails that test). The link shows on each load for 5 minutes (Server Components can't delete a cookie), on that browser only |
 | Return it as form state (React only) | No link at all for a native post (ADR 0018). Rejected |
 
-The invitee's own link, `/invite?token=…`, still carries the token in its URL by nature (T6's open item: whether Vercel logs query strings is **unverified**). The token is useless without a confirmed session of the invited address (T5; 050's wrong-account tests, E2E).
+The invitee's own link, `/invite?token=…`, still carries the token in its URL by nature (T6: whether Vercel logs query strings couldn't be measured, so its request logs are assumed to keep the token; M2.md section 10, Gaps). The token is useless without a confirmed session of the invited address (T5; 050's wrong-account tests, E2E).
 
 ## 5. Withdrawn and expired invitations delete the unused invited account (threat T8)
 
