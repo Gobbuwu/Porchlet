@@ -34,6 +34,7 @@ Option 1.
   - It takes `pg_advisory_xact_lock` on each bucket in a fixed order, so two calls that share buckets can't deadlock. The lock is held until the request's transaction commits, so a parallel call waits and then counts the committed hits.
   - It refuses to run outside read committed: under repeatable read or serializable its count would use a snapshot taken before the wait. Measured: `rate_limit_take needs read committed, not repeatable read`. The app shows "Something went wrong" then (fails closed).
   - Hits older than an hour are deleted before any lock is taken, skipping rows another call is deleting, so the cleanup never waits while it holds a bucket lock.
+- An IPv4 address written as IPv6 (`::ffff:a.b.c.d`, as a dual-stack socket reports it) is counted as that IPv4 address. `rate_limit_hit` applied the IPv6 /64 rule to it, which put every such visitor in one `::/64` bucket (found by the code review of this change; checked in psql: `network(set_masklen('::ffff:203.0.113.5', 64))` is `::/64`).
 - `public.rate_limit_release(key, ids[])` gives hits back.
 - `public.rate_limit_hit` is dropped, so no code path can count in two steps again.
 - A login takes a slot in both failure buckets, then:

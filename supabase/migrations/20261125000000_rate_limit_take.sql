@@ -29,8 +29,8 @@ revoke all on function private.rate_limit_key_ok(text) from public, anon, authen
 -- p_limits[i] hits within p_windows[i] seconds. Returns the new hits' ids when every bucket had
 -- room, an empty array when any bucket is full (nothing is recorded then), or null when the key is
 -- wrong or an argument is out of range. The bucket is the scope plus the visitor's IP: the full
--- address for IPv4 and the /64 network for IPv6, since one IPv6 user usually holds a whole /64.
--- An address that doesn't parse counts as 'unknown'.
+-- address for IPv4 (also when written as IPv4-mapped IPv6) and the /64 network for IPv6, since one
+-- IPv6 user usually holds a whole /64. An address that doesn't parse counts as 'unknown'.
 --
 -- Why it can't overshoot: each bucket is guarded by a transaction-level advisory lock, taken in a
 -- fixed order (so two calls sharing buckets can't deadlock), and held until the caller's
@@ -80,6 +80,11 @@ begin
   exception when others then
     v_ip := null;
   end;
+  -- An IPv4 address written as IPv6 (::ffff:a.b.c.d, as a dual-stack socket reports it) counts as
+  -- that IPv4 address; as IPv6 its /64 would be ::/64, one bucket for every such visitor.
+  if v_ip <<= '::ffff:0:0/96'::inet then
+    v_ip := '0.0.0.0'::inet + (v_ip - '::ffff:0.0.0.0'::inet);
+  end if;
   v_who := coalesce(
     case when family(v_ip) = 6 then network(set_masklen(v_ip, 64))::text else host(v_ip) end,
     'unknown');
