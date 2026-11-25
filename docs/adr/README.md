@@ -9,6 +9,7 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0003](0003-licence-mit.md) | Licence: MIT | Accepted |
 | [0004](0004-rls-is-the-only-gate.md) | Browser talks to Supabase directly; RLS is the only gate | Accepted |
 | [0005](0005-secret-key-two-server-routes.md) | Secret key used in two server routes only | Accepted |
+| [0006](0006-inserts-through-security-definer-rpcs.md) | Workspaces, memberships and invitations are created only through security definer functions | Accepted |
 | [0011](0011-owasp-asvs-level-2.md) | Secure-coding standard: OWASP ASVS 5.0.0 Level 2 | Accepted |
 | [0012](0012-ci-pipeline.md) | CI pipeline: jobs, tools and lockdown | Proposed (PR 2) |
 | [0013](0013-security-headers.md) | Security response headers | Proposed |
@@ -23,4 +24,4 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0022](0022-atomic-rate-limit-take.md) | The auth limiter checks and counts an attempt in one atomic step | Accepted |
 | [0023](0023-current-password-to-change-it.md) | A password change asks for the current password; a reset link's session must save a new one | Accepted |
 
-ADRs 0006-0010 are written when their milestone starts (see the M0 doc).
+ADRs 0007-0010 are written when their milestone starts (see the M0 doc).

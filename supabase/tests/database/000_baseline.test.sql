@@ -27,10 +27,15 @@ select results_eq(
   $$ values ('rate_limit_release(text,bigint[])'), ('rate_limit_take(text,text,text[],integer[],integer[])') $$,
   'anon can execute only rate_limit_take() and rate_limit_release() in public (setup_status() is added in M5)');
 
--- 4-5. The private schema is closed to the API roles.
+-- 4-5. The private schema is closed to anon; authenticated reaches only the policy helpers.
 select ok(not has_schema_privilege('anon', 'private', 'usage'), 'anon has no usage on schema private');
-select ok(not has_schema_privilege('authenticated', 'private', 'usage'),
-  'authenticated has no usage on schema private (M2 grants it for the policy helpers)');
+-- M2 grants authenticated usage on private for the policy helpers, and execute on them only.
+select results_eq(
+  $$ select p.oid::regprocedure::text
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'private' and has_function_privilege('authenticated', p.oid, 'execute') order by 1 $$,
+  $$ values ('private.co_member_ids()'), ('private.member_workspace_ids()'), ('private.owner_workspace_ids()') $$,
+  'authenticated can execute only the three policy helpers in private');
 
 -- 6-11. private.instance: one row, no second row, no API access.
 select has_table('private', 'instance', 'private.instance exists');

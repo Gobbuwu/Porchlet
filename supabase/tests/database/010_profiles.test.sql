@@ -17,16 +17,18 @@ select fk_ok('public', 'profiles', 'id', 'auth', 'users', 'id', 'profiles.id ref
 select ok((select relrowsecurity from pg_class where oid = 'public.profiles'::regclass),
   'row level security is on for public.profiles');
 
--- 5-6. Exactly the expected policies, nothing else.
-select policies_are('public', 'profiles', array['profiles_select_own', 'profiles_update_own'],
-  'public.profiles has only the select-own and update-own policies');
+-- 5-6. Exactly the expected policies, nothing else. Co-member reads are tested in 040_workspaces.
+select policies_are('public', 'profiles',
+  array['profiles_select_co_member', 'profiles_select_own', 'profiles_update_own'],
+  'public.profiles has only the select-own, select-co-member (M2) and update-own policies');
 select is(
   (select array_agg(p.polname || ':' || p.polcmd::text || ':' || p.polpermissive::text || ':'
                     || array_to_string(array(select r::regrole::text from unnest(p.polroles) r), ',')
                     order by p.polname)
      from pg_policy p where p.polrelid = 'public.profiles'::regclass),
-  array['profiles_select_own:r:true:authenticated', 'profiles_update_own:w:true:authenticated'],
-  'both policies are permissive, for authenticated only, on select and update');
+  array['profiles_select_co_member:r:true:authenticated', 'profiles_select_own:r:true:authenticated',
+        'profiles_update_own:w:true:authenticated'],
+  'all three policies are permissive, for authenticated only, on select and update');
 
 -- 7-14. Grants: authenticated may select and update display_name only; anon gets nothing.
 select table_privs_are('public', 'profiles', 'anon', array[]::text[], 'anon has no table privileges');
@@ -73,7 +75,7 @@ select set_config('request.jwt.claims',
 
 select results_eq($$ select id from public.profiles $$,
   $$ values ('00000000-0000-4000-a000-00000000000a'::uuid) $$,
-  'A sees only their own profile');
+  'A sees only their own profile (A and B share no workspace)');
 select is_empty($$ select 1 from public.profiles where id = '00000000-0000-4000-a000-00000000000b' $$,
   'A cannot see B''s profile by id');
 select results_eq(
