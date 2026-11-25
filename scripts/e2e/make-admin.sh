@@ -12,7 +12,9 @@ status=$(npx supabase status -o json)
 api=$(jq -er '.API_URL' <<<"$status")
 db_url=$(jq -er '.DB_URL' <<<"$status")
 secret=$(jq -er '.SECRET_KEY' <<<"$status")
-case "$api" in http://127.0.0.1:*|http://localhost:*) ;; *) echo "refusing: $api is not a local stack" >&2; exit 1 ;; esac
+# The whole URL must be a local host and port: a glob such as http://127.0.0.1:* would also match
+# http://127.0.0.1:1@other.host/ and send the key elsewhere.
+[[ $api =~ ^http://(127\.0\.0\.1|localhost):[0-9]+/?$ ]] || { echo "refusing: $api is not a local stack" >&2; exit 1; }
 
 email="e2e-admin-$(openssl rand -hex 6)@example.test"
 password="pw-$(openssl rand -hex 16)"
