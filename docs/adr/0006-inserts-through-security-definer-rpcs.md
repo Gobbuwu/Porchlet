@@ -30,16 +30,16 @@ Details decided while building it, each measured or tested:
 
    | Query | Per-row `is_member()` | Set-based (chosen) |
    |---|---|---|
-   | All visible projects | 121.9 to 201.8 ms | 2.7 to 3.6 ms |
-   | One workspace's projects | 0.20 to 0.28 ms | 0.08 to 0.22 ms |
+   | All visible projects | 123.9 to 132.2 ms | 1.3 to 1.6 ms |
+   | One workspace's projects | 0.25 to 0.41 ms | 0.07 to 0.15 ms |
 
-   Same rows either way (100 and 20). The helpers return only the caller's own workspaces or co-members, so `authenticated` learns nothing by calling them.
+   Same rows either way (100 and 20). Absolute times vary between runs (two earlier runs gave 2.7 to 3.6 ms set-based and 121.9 to 201.8 ms per row); the gap of about two orders of magnitude held in all three. The helpers return only the caller's own workspaces or co-members, so `authenticated` learns nothing by calling them.
 
-2. **`(select auth.uid())` is kept.** Same script, own-profile policy on 10,000 profiles: with index scans on, both forms take about 0.008 ms (the planner uses the primary key either way); with index scans forced off, the bare `auth.uid()` took 6.3 to 9.7 ms and `(select auth.uid())` 0.49 to 0.67 ms. That confirms the design's wording, which was unverified.
+2. **`(select auth.uid())` is kept.** Same script, own-profile policy on 10,000 profiles: with index scans on, both forms take 0.01 to 0.04 ms (the planner uses the primary key either way); with index scans forced off, the bare `auth.uid()` took 11.0 to 11.5 ms and `(select auth.uid())` 0.38 to 0.68 ms. That confirms the design's wording, which was unverified.
 
 3. **The hourly invitation cap is counted from `private.invitation_sends`, not from `invitations`.** The design counted `invitations.created_at`, but owners may delete invitations, so revoking and inviting again would get past the cap (planted case P20 in M2.md: the "21st invitation within the hour, even after revoking one" test fails on the design's version). `invitation_sends` keeps one row per invitation made, for an hour, with no grants and RLS on ([ADR 0017](0017-rls-on-private-tables.md)).
 
-4. **Caps can't be raced.** `create_invitation` locks the workspace row and takes a per-owner advisory lock before counting, held until the caller's transaction ends, and refuses `repeatable read` and `serializable`, as `rate_limit_take` does ([ADR 0022](0022-atomic-rate-limit-take.md)). `accept_invitation` locks the invitation row before checking it. `scripts/ci/db-race-check.sh` runs both races with two sessions in CI.
+4. **Caps can't be raced.** `create_invitation` locks the workspace row (`for no key update`, which queues parallel calls but doesn't block the key-share locks that project and membership inserts take for their foreign keys) and takes a per-owner advisory lock before counting, held until the caller's transaction ends, and refuses `repeatable read` and `serializable`, as `rate_limit_take` does ([ADR 0022](0022-atomic-rate-limit-take.md)). `accept_invitation` locks the invitation row before checking it. `scripts/ci/db-race-check.sh` runs both races with two sessions in CI.
 
 5. **`token_hash` is not selectable.** `authenticated` gets a column-level select on `invitations` without it; nothing in the app needs it.
 
@@ -49,7 +49,7 @@ Details decided while building it, each measured or tested:
 
 ## Consequences
 
-- `authenticated` now has usage on schema `private` and execute on exactly the three set-returning helpers; baseline test 5 lists them, so a new grant fails CI. Every private table still has no grants and RLS on.
+- `authenticated` now has usage on schema `private` and execute on exactly the three set-returning helpers; baseline test 5 lists them, and baseline test 6 fails on any grant to `anon` or `authenticated` on a private table, view or sequence. Every private table still has RLS on.
 - These functions bypass RLS, so their own checks are the only gate. Each check has a pgTAP test, and each test was shown failing on a planted bad case (M2.md).
 - M4 adds `aal2()` to the owner checks in these functions and to the owner policies (decision D1), with tests using AAL1 and AAL2 claims.
 - PR 3 (invites) calls `create_invitation` before sending the email and deletes the invitation if sending fails; it shows the `P0001` messages as text.

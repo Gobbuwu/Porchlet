@@ -16,6 +16,11 @@ declare
   v_confirmed timestamptz;
   v_old uuid;
 begin
+  -- Supabase's email uniqueness covers non-SSO users only, so refuse an address that matches more
+  -- than one account rather than pick one.
+  if (select count(*) from auth.users u where lower(u.email) = v_email) > 1 then
+    raise exception 'More than one account has the email %; set admin_user_id by id instead', v_email;
+  end if;
   select u.id, u.email_confirmed_at into v_user, v_confirmed
     from auth.users u where lower(u.email) = v_email;
   if v_user is null then

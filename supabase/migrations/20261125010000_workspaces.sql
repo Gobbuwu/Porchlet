@@ -3,6 +3,9 @@
 -- ADR 0006. Checked by supabase/tests/database/040_workspaces.test.sql,
 -- 050_invitations.test.sql and scripts/ci/db-race-check.sh.
 --
+-- The co-member profile read that the M1 profiles migration announced as private.shares_workspace
+-- is built here as profiles_select_co_member with private.co_member_ids().
+--
 -- Decision D1 (M2.md): no aal2() here. M4 adds aal2() to the owner actions and the restrictive
 -- mfa_opt_in policy to every table in one migration.
 
@@ -92,8 +95,8 @@ grant update (name, status) on public.projects to authenticated;
 -- security definer lets them read workspace_members without the policies calling themselves.
 --
 -- Policies use `column in (select private.x_ids())`, not a per-row `private.is_member(column)`:
--- the set is computed once per statement and hashed. Measured on the local stack with 20,000
--- projects (ADR 0006): a full select took 133.5 ms per-row and 1.9 ms set-based.
+-- the set is computed once per statement and hashed. Measured with scripts/dev/policy-perf.sql
+-- (20,000 projects, ADR 0006): a full select took 123.9 to 132.2 ms per-row, 1.3 to 1.6 ms set-based.
 
 grant usage on schema private to authenticated;
 
@@ -224,7 +227,7 @@ $$;
 -- An owner invites an email address. Returns the invitation id and the raw token, once: only the
 -- token's sha256 is stored. Limits: 20 pending invitations per workspace, and 20 invitations per
 -- owner per hour counted from private.invitation_sends (so deleting invitations frees no room).
--- The workspace row lock and a per-owner advisory lock, taken in that order and held to the end of
+-- The workspace row lock (for no key update) and a per-owner advisory lock, taken in that order and held to the end of
 -- the caller's transaction, make two parallel calls count one after the other; under repeatable
 -- read or serializable the counts would come from a snapshot taken before the wait, so those
 -- levels are refused (as in rate_limit_take, ADR 0022).
@@ -251,7 +254,9 @@ begin
     raise exception 'invalid_email' using errcode = 'P0001';
   end if;
 
-  perform 1 from public.workspaces w where w.id = p_workspace_id for update;
+  -- for no key update conflicts with itself, so parallel calls queue, but not with the key-share
+  -- locks that foreign-key checks take, so project and membership inserts don't wait for it.
+  perform 1 from public.workspaces w where w.id = p_workspace_id for no key update;
   perform pg_advisory_xact_lock(hashtextextended('porchlet.invitation_sends:' || v_uid::text, 0));
 
   if exists (
