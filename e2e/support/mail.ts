@@ -19,6 +19,16 @@ export async function mailCount(to: string): Promise<number> {
 // Waits for the newest email to `to` whose subject matches, and returns the /auth/confirm link
 // in it. `after` is how many emails `to` had before the action that sends this one.
 export async function confirmLink(to: string, subject: RegExp, after = 0): Promise<string> {
+  return linkIn(to, subject, after, /href="([^"]*\/auth\/confirm\?[^"]*)"/);
+}
+
+// The same for Supabase's own /auth/v1/verify link, which emails without a Porchlet template
+// (the sign-in link) carry.
+export async function verifyLink(to: string, subject: RegExp, after = 0): Promise<string> {
+  return linkIn(to, subject, after, /href="([^"]*\/auth\/v1\/verify\?[^"]*)"/);
+}
+
+async function linkIn(to: string, subject: RegExp, after: number, pattern: RegExp): Promise<string> {
   let found: Summary | undefined;
   await expect
     .poll(
@@ -32,7 +42,7 @@ export async function confirmLink(to: string, subject: RegExp, after = 0): Promi
     .toBe(true);
   const res = await fetch(`${MAILPIT}/api/v1/message/${found!.ID}`);
   const html = ((await res.json()) as { HTML: string }).HTML;
-  const href = html.match(/href="([^"]*\/auth\/confirm\?[^"]*)"/)?.[1];
-  if (!href) throw new Error(`no /auth/confirm link in "${found!.Subject}"`);
+  const href = html.match(pattern)?.[1];
+  if (!href) throw new Error(`no ${pattern} link in "${found!.Subject}"`);
   return href.replaceAll("&amp;", "&");
 }

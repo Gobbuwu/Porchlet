@@ -1,4 +1,5 @@
-import { confirmLink } from "./support/mail";
+import type { BrowserContext } from "@playwright/test";
+import { confirmLink, mailCount, verifyLink } from "./support/mail";
 import { expect, test } from "./support/test";
 import {
   alertIn,
@@ -120,23 +121,85 @@ test("a flagged session that has ended is told to log in again, not that a reset
 }) => {
   await flaggedUser(page, context, "flag-ended");
   await expect(alertIn(page)).toHaveText(REQUIRED_AT_LOGIN);
-  const { url, key } = supabaseEnv();
-  const { access_token } = await readSession(context);
   // End the session server-side while this page is open: the form's post still carries an access
   // token that hasn't expired.
+  await endSessionServerSide(context);
+  await page.getByLabel("Current password").fill("password1234");
+  await page.getByLabel(/^New password/).fill(`${newUser("x").password}-new`);
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(alertIn(page)).toHaveText("Your session has ended. Log in again.");
+  // The browser is signed out too, so logging in again works at once (the still-valid access token
+  // would otherwise send /login to /w and back to /reset).
+  await page.goto("/login");
+  await expect(page).toHaveURL(/\/login$/);
+});
+
+test("/reset for an ended password session says to log in again", async ({ page, context }) => {
+  await flaggedUser(page, context, "flag-expired");
+  await endSessionServerSide(context);
+  // Once the access token expires too (as the idle limit would), the proxy can't refresh it.
+  await expireSession(context);
+  await page.goto("/reset?error=password-change-required");
+  await expect(alertIn(page)).toHaveText("Your session has ended. Log in again.");
+  await expect(page.getByRole("link", { name: "Log in again" })).toHaveAttribute("href", "/login");
+  // Where the form's answer lands when posted without JavaScript.
+  await page.goto("/reset?error=session-ended");
+  await expect(alertIn(page)).toHaveText("Your session has ended. Log in again.");
+});
+
+test("a sign-in link of the same user in a flagged browser keeps the flag", async ({ page, context }) => {
+  const user = await flaggedUser(page, context, "flag-same-user");
+  // Supabase sends a sign-in link to anyone who asks its API; its token is the token hash that
+  // /auth/confirm takes with type=email.
+  const { url, key } = supabaseEnv();
+  const before = await mailCount(user.email);
+  const otp = await fetch(`${url}/auth/v1/otp`, {
+    method: "POST",
+    headers: { apikey: key, "content-type": "application/json" },
+    body: JSON.stringify({ email: user.email, create_user: false }),
+  });
+  expect(otp.status).toBe(200);
+  const token = new URL(await verifyLink(user.email, /Your sign-in link/, before)).searchParams.get("token");
+  expect(token).toBeTruthy();
+  await page.goto(`/auth/confirm?${new URLSearchParams({ token_hash: token!, type: "email" })}`);
+  await page.getByRole("button", { name: "Confirm email" }).click();
+  await expect(page).toHaveURL(/\/reset\?error=new-password-required$/);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/reset\?error=new-password-required$/);
+});
+
+test("a form rendered for a link session, posted after a password login, asks for the current password", async ({
+  page,
+  context,
+}) => {
+  const user = await signUpAndConfirm(page, "stale-form");
+  await context.clearCookies();
+  await openResetLink(page, user.email);
+  await expect(page.getByLabel("Current password")).toHaveCount(0);
+  // In another tab of the same browser: log out, then log in with the password.
+  const tab = await context.newPage();
+  await tab.goto("/reset");
+  await tab.getByRole("button", { name: "Log out" }).click();
+  await expect(tab).toHaveURL(/\/login\?signed_out=1$/);
+  await fillLogin(tab, user.email, user.password);
+  await expect(tab).toHaveURL(/\/w$/);
+  // The first tab's form has no field for it; the page reloads with one.
+  await page.getByLabel(/^New password/).fill(`${user.password}-new`);
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(page).toHaveURL(/\/reset\?error=current-password-required$/);
+  await expect(alertIn(page)).toHaveText("Enter your current password.");
+  await page.getByLabel("Current password").fill(user.password);
+  await page.getByLabel(/^New password/).fill(`${user.password}-new`);
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(page).toHaveURL(/\/w\?password=changed$/);
+});
+
+async function endSessionServerSide(context: BrowserContext) {
+  const { url, key } = supabaseEnv();
+  const { access_token } = await readSession(context);
   const logout = await fetch(`${url}/auth/v1/logout?scope=global`, {
     method: "POST",
     headers: { apikey: key, authorization: `Bearer ${access_token}` },
   });
   expect(logout.status).toBe(204);
-  await page.getByLabel("Current password").fill("password1234");
-  await page.getByLabel(/^New password/).fill(`${newUser("x").password}-new`);
-  await page.getByRole("button", { name: "Save new password" }).click();
-  await expect(alertIn(page)).toHaveText("Your session has ended. Log in again.");
-
-  // Once the access token expires too (as the idle limit would), the page says the same.
-  await expireSession(context);
-  await page.goto("/reset?error=password-change-required");
-  await expect(alertIn(page)).toHaveText("Your session has ended. Log in again.");
-  await expect(page.getByRole("link", { name: "Log in again" })).toHaveAttribute("href", "/login");
-});
+}

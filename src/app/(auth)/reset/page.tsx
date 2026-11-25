@@ -16,12 +16,14 @@ export default async function ResetPage({ searchParams }: PageProps<"/reset">) {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
   if (!data?.claims?.sub) {
-    // The login check sends a flagged session here with this code; if that session has since ended,
-    // the visitor never had a reset link, so the reset-link text would be wrong (ADR 0023).
+    // These codes come with a password session (the login check's redirect, or the form's answer
+    // once the session ended); that visitor never had a reset link, so the reset-link text would be
+    // wrong (ADR 0023).
+    const passwordSession = params.error === "password-change-required" || params.error === "session-ended";
     return (
       <main className="narrow">
         <h1>Choose a new password</h1>
-        {params.error === "password-change-required" ? (
+        {passwordSession ? (
           <p role="alert" className="error">
             Your session has ended. <Link href="/login">Log in again</Link>.
           </p>

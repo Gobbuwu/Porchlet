@@ -7,6 +7,7 @@ import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTE
 import { loginNeedsPasswordChange, newPasswordProblem } from "@/lib/auth/password-check";
 import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
+import { startedFromEmailedLink } from "@/lib/auth/session";
 import type { FormState } from "@/lib/auth/types";
 import { isHttps } from "@/lib/http";
 import { hardenCookie, passwordChangeCookieName } from "@/lib/supabase/config";
@@ -179,11 +180,12 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
   const password = field(formData, "password");
   const problem = await newPasswordProblem(password);
   if (problem) return answer("/reset", { error: problem });
-  // /reset shows the current-password field only to a session that didn't come from an emailed
-  // link; Supabase Auth checks it (require_current_password, ADR 0023), so leaving it out of a
-  // forged post only gets current_password_required. Its presence also says which message fits
-  // when the session is gone.
-  const passwordSession = formData.has("current_password");
+  // Supabase Auth asks a password session for its current password (require_current_password,
+  // ADR 0023); it decides from the session, so a post without the field gets
+  // current_password_required. Read from the live session rather than the form, which may have been
+  // rendered for an earlier one; with no session, the form's field says which kind it was.
+  const claims = (await supabase.auth.getClaims()).data?.claims;
+  const passwordSession = claims ? !startedFromEmailedLink(claims.amr) : formData.has("current_password");
   const { error } = await supabase.auth.updateUser(
     passwordSession ? { password, current_password: field(formData, "current_password") } : { password },
   );
@@ -191,17 +193,24 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
     logAuthError("reset-update", error);
     // auth-js answers AuthSessionMissingError (400, no code) when Supabase Auth no longer knows the
     // session, for example after it was ended server-side while its access token was still valid
-    // (measured, ADR 0023).
+    // (measured, ADR 0023). That token would keep the visitor "signed in" here until it expires, so
+    // the session is ended locally too, and logging in again works at once.
     if (
       isAuthSessionMissingError(error) ||
       error.status === 401 ||
       error.code === "session_not_found" ||
       error.code === "no_authorization"
     ) {
+      await endSession(supabase);
       return answer("/reset", { error: passwordSession ? "session-ended" : "reset-expired" });
     }
-    // This page has no email field, so Supabase's validation_failed can't be about an email.
     const code = authErrorCode(error);
+    // A form rendered for an emailed-link session has no current-password field; reload the page
+    // so this session gets one.
+    if (code === "current-password-required" && !formData.has("current_password")) {
+      redirect("/reset?error=current-password-required");
+    }
+    // This page has no email field, so Supabase's validation_failed can't be about an email.
     return answer("/reset", { error: code === "invalid-email" ? GENERIC_ERROR : code });
   }
   // Supabase Auth ends the account's other sessions on a password change (ASVS 5.0.0 7.4.3;
@@ -245,7 +254,11 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   if (mustChange && !(await flagSession(supabase, data.session?.access_token))) {
     return answer(page, { error: "link-used" });
   }
-  redirect(type === "recovery" ? "/reset" : "/w");
+  if (type === "recovery") redirect("/reset");
+  // A redirect from a Server Action renders its target in the same response, without the proxy
+  // (measured: a flagged session's sign-in link showed /w), so a flagged session is sent to /reset
+  // here rather than left to the proxy.
+  redirect(mustChange ? "/reset?error=new-password-required" : "/w");
 }
 
 export async function logOut(): Promise<void> {
