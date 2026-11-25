@@ -14,11 +14,15 @@ export const MESSAGES = {
     "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
   "password-change-required":
     "The password you logged in with is too short, too common or has appeared in a data breach. Choose a new one to continue.",
+  "new-password-required": "Save a new password to continue, or log out.",
   "same-password": "Choose a password that is different from your current one.",
+  "current-password-required": "Enter your current password.",
+  "current-password-wrong": "Your current password is wrong.",
   "invalid-email": "Enter a valid email address.",
   "link-used": "This link has expired or was already used. Ask for a new one.",
   "link-invalid": "This link is not valid. Ask for a new one.",
   "reset-expired": "Your reset link has expired. Ask for a new one.",
+  "session-ended": "Your session has ended. Log in again.",
   "signup-disabled": "Sign-up is turned off on this site.",
   "signup-sent": "Check your email for a link to confirm your account.",
   "reset-sent": "If an account uses that email, we sent it a link to choose a new password.",
@@ -49,6 +53,11 @@ export function authErrorCode(error: AuthErrorLike): MessageCode {
       return "weak-password";
     case "same_password":
       return "same-password";
+    // With require_current_password on (ADR 0023).
+    case "current_password_required":
+      return "current-password-required";
+    case "current_password_invalid":
+      return "current-password-wrong";
     case "email_address_invalid":
     case "validation_failed":
       return "invalid-email";

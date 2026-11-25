@@ -1,11 +1,13 @@
 "use server";
 
+import { isAuthSessionMissingError } from "@supabase/supabase-js";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
 import { loginNeedsPasswordChange, newPasswordProblem } from "@/lib/auth/password-check";
 import { checkLimits, clientIp, type Rule, RULES } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
+import { startedFromEmailedLink } from "@/lib/auth/session";
 import type { FormState } from "@/lib/auth/types";
 import { isHttps } from "@/lib/http";
 import { hardenCookie, passwordChangeCookieName } from "@/lib/supabase/config";
@@ -178,14 +180,37 @@ export async function setNewPassword(_state: FormState, formData: FormData): Pro
   const password = field(formData, "password");
   const problem = await newPasswordProblem(password);
   if (problem) return answer("/reset", { error: problem });
-  const { error } = await supabase.auth.updateUser({ password });
+  // Supabase Auth asks a password session for its current password (require_current_password,
+  // ADR 0023); it decides from the session, so a post without the field gets
+  // current_password_required. Read from the live session rather than the form, which may have been
+  // rendered for an earlier one; with no session, the form's field says which kind it was.
+  const claims = (await supabase.auth.getClaims()).data?.claims;
+  const passwordSession = claims ? !startedFromEmailedLink(claims.amr) : formData.has("current_password");
+  const { error } = await supabase.auth.updateUser(
+    passwordSession ? { password, current_password: field(formData, "current_password") } : { password },
+  );
   if (error) {
     logAuthError("reset-update", error);
-    if (error.status === 401 || error.code === "session_not_found" || error.code === "no_authorization") {
-      return answer("/reset", { error: "reset-expired" });
+    // auth-js answers AuthSessionMissingError (400, no code) when Supabase Auth no longer knows the
+    // session, for example after it was ended server-side while its access token was still valid
+    // (measured, ADR 0023). That token would keep the visitor "signed in" here until it expires, so
+    // the session is ended locally too, and logging in again works at once.
+    if (
+      isAuthSessionMissingError(error) ||
+      error.status === 401 ||
+      error.code === "session_not_found" ||
+      error.code === "no_authorization"
+    ) {
+      await endSession(supabase);
+      return answer("/reset", { error: passwordSession ? "session-ended" : "reset-expired" });
+    }
+    const code = authErrorCode(error);
+    // A form rendered for an emailed-link session has no current-password field; reload the page
+    // so this session gets one.
+    if (code === "current-password-required" && !formData.has("current_password")) {
+      redirect("/reset?error=current-password-required");
     }
     // This page has no email field, so Supabase's validation_failed can't be about an email.
-    const code = authErrorCode(error);
     return answer("/reset", { error: code === "invalid-email" ? GENERIC_ERROR : code });
   }
   // Supabase Auth ends the account's other sessions on a password change (ASVS 5.0.0 7.4.3;
@@ -210,21 +235,30 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   if (limited) return answer(page, { error: limited });
   // An emailed link starts a new session; if this browser's current session is flagged by the login
   // check, the new one is flagged too, so a link is no way around the change (ADR 0021). As in the
-  // proxy, the flag counts only while it holds the current session's id.
+  // proxy, the flag counts only while it holds the current session's id, and it is carried only to
+  // a session of the same user: another account's link in this browser has nothing to change.
   const flag = (await cookies()).get(passwordChangeCookieName(isHttps(await headers())))?.value;
-  const current = flag ? (await supabase.auth.getClaims()).data?.claims?.session_id : undefined;
-  const flagged = !!flag && flag === current;
+  const claims = flag ? (await supabase.auth.getClaims()).data?.claims : undefined;
+  const flaggedUser = !!flag && flag === claims?.session_id ? claims.sub : undefined;
   const { data, error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
   if (error) {
     logAuthError(`verify-${type}`, error);
     if (error.status === 429) return answer(page, { error: authErrorCode(error) });
     return answer(page, { error: "link-used" });
   }
+  // A reset link's session exists to set a new password, and Supabase Auth lets it do so without
+  // the current one, so it can't open the app until it has (ADR 0023): otherwise the link would
+  // be a way into the app that leaves the old password in place.
+  const mustChange = type === "recovery" || (!!flaggedUser && flaggedUser === data.user?.id);
   // If the new session can't be flagged it has been ended, and the link is used up.
-  if (flagged && !(await flagSession(supabase, data.session?.access_token))) {
+  if (mustChange && !(await flagSession(supabase, data.session?.access_token))) {
     return answer(page, { error: "link-used" });
   }
-  redirect(type === "recovery" ? "/reset" : "/w");
+  if (type === "recovery") redirect("/reset");
+  // A redirect from a Server Action renders its target in the same response, without the proxy
+  // (measured: a flagged session's sign-in link showed /w), so a flagged session is sent to /reset
+  // here rather than left to the proxy.
+  redirect(mustChange ? "/reset?error=new-password-required" : "/w");
 }
 
 export async function logOut(): Promise<void> {

@@ -1,6 +1,7 @@
 # 0021. Password length is checked like Supabase counts it; passwords are checked again at every login
 
 - Status: Accepted (2026-11-24, M1). Adds to [ADR 0019](0019-common-and-breached-password-check.md); does not change its decision.
+- Amended by [ADR 0023](0023-current-password-to-change-it.md) (2026-11-25): every reset link's session is now flagged until it saves a new password, the flag is carried to a link's session only for the same user, and the forced change asks for the current password too. Statements below that a reset link's session is not flagged no longer hold.
 
 ## Context
 
