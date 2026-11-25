@@ -1,13 +1,15 @@
 -- M2 PR 3, after /review-critical (ADR 0024 sections 5 and 7). Checked by
 -- supabase/tests/database/080_invite_account_check.test.sql and scripts/ci/db-race-check.sh.
 --
--- 1. An unconfirmed account that someone made by signing up with the address, before any invite,
---    keeps that person's password when Supabase's invite email reuses it, and the invited person's
---    click confirms it (measured on GoTrue v2.198.0: the sign-up's password then logs in). Whoever
---    signed up can be anyone who knows the address, so the invite flow deletes such an account
---    before the email goes out, and checks again after it (a sign-up in between). After the invite,
---    a sign-up stores no password (measured), so the account then has only the password the invited
---    person chooses.
+-- 1. An unconfirmed account that a sign-up made keeps that sign-up's password when Supabase's
+--    invite email reuses it, and pressing the email's button confirms it (measured on GoTrue
+--    v2.198.0). Two parts:
+--    a. The invite action deletes such an account before the email (clear_unconfirmed_signup), so
+--       the invite makes a fresh account with no password.
+--    b. Whatever happens between that and the email (a sign-up in the moment between), an invited
+--       account's password is cleared when its address is confirmed: only a password the confirming
+--       person then sets opens it. An invited account is confirmed only by a link sent to the
+--       address, so the person who confirms it is the address's owner.
 --
 -- 2. The cleanup's "no open invitation" check moves into a volatile function. A delete that waits on
 --    the account's row lock (Supabase Auth updating it for a new invite) re-checks the row under the
@@ -50,7 +52,7 @@ begin
 end;
 $$;
 
--- Called by the invite action as the owner, before and after the invite email (see 1 above).
+-- Called by the invite action as the owner, before the invite email (see 1a above).
 -- Deletes the open invitation's address's account if it is unconfirmed, never signed in, and has
 -- a password: nobody has shown they own that address, and the password is not the invited
 -- person's. An invited account with no password, and every confirmed or signed-in account, stay.
@@ -83,6 +85,26 @@ begin
 end;
 $$;
 
-revoke all on function private.has_open_invitation(text), public.clear_unconfirmed_signup(uuid)
+-- 1b: on the update that confirms an invited account's address, drop any password it has.
+create function private.clear_invited_password_on_confirm() returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.email_confirmed_at is null and new.email_confirmed_at is not null
+     and new.invited_at is not null and coalesce(new.encrypted_password, '') <> '' then
+    new.encrypted_password := '';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger clear_invited_password_on_confirm
+  before update on auth.users
+  for each row execute function private.clear_invited_password_on_confirm();
+
+revoke all on function private.has_open_invitation(text), public.clear_unconfirmed_signup(uuid),
+  private.clear_invited_password_on_confirm()
   from public, anon, authenticated;
 grant execute on function public.clear_unconfirmed_signup(uuid) to authenticated;

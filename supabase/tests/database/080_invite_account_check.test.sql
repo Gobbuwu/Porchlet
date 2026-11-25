@@ -1,10 +1,11 @@
--- The invite flow's account check (M2 PR 3, ADR 0024 section 7): before and after the invite
--- email, the owner deletes the invited address's unconfirmed, never-signed-in account that has a
--- password (someone else's sign-up would keep that password). Every other account stays. Also the
--- cleanup's volatile open-invitation check. Migration 20261125040000_invite_account_check.sql.
+-- The invite flow's account check (M2 PR 3, ADR 0024 section 7): before the invite email, the
+-- owner deletes the invited address's unconfirmed, never-signed-in account that has a password
+-- (someone else's sign-up would keep that password); every other account stays. Confirming an
+-- invited account drops any password it has. Also the cleanup's volatile open-invitation check.
+-- Migration 20261125040000_invite_account_check.sql.
 -- Covers: public.invitations
 begin;
-select plan(17);
+select plan(22);
 
 -- A owns X, B owns Y. Q* are accounts with each invitation's address.
 insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_at) values
@@ -15,11 +16,14 @@ insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_
   ('00000000-0000-4000-b000-000000000003', 'q3@example.test', now(), null, now()),   -- confirmed, signed in
   ('00000000-0000-4000-b000-000000000004', 'q4@example.test', null, null, now()),    -- unconfirmed but signed in
   ('00000000-0000-4000-b000-000000000005', 'Q5@Example.TEST', null, now(), null),    -- sign-up then invite, mixed case
-  ('00000000-0000-4000-b000-000000000006', 'q6@example.test', now(), null, null);    -- confirmed, never signed in
+  ('00000000-0000-4000-b000-000000000006', 'q6@example.test', now(), null, null),    -- confirmed, never signed in
+  ('00000000-0000-4000-b000-000000000007', 'q7@example.test', null, now(), null),    -- invited, with a password
+  ('00000000-0000-4000-b000-000000000008', 'q8@example.test', null, null, null);     -- own sign-up, not invited
 update auth.users set encrypted_password = extensions.crypt('someone-elses-password', extensions.gen_salt('bf'))
  where id in ('00000000-0000-4000-b000-000000000001', '00000000-0000-4000-b000-000000000003',
               '00000000-0000-4000-b000-000000000004', '00000000-0000-4000-b000-000000000005',
-              '00000000-0000-4000-b000-000000000006');
+              '00000000-0000-4000-b000-000000000006', '00000000-0000-4000-b000-000000000007',
+              '00000000-0000-4000-b000-000000000008');
 insert into public.workspaces (id, name, created_by) values
   ('00000000-0000-4000-c000-0000000000f1', 'X', '00000000-0000-4000-a000-00000000000a'),
   ('00000000-0000-4000-c000-0000000000f2', 'Y', '00000000-0000-4000-a000-00000000000b');
@@ -94,6 +98,23 @@ select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000003')
 -- 17. The cleanup still keeps an account whose address has an open invitation.
 select is(private.delete_unused_invited_users('q2@example.test'), 0,
   'the cleanup keeps q2 while its invitation is open');
+
+-- 18-22. Confirming an invited account drops its password; nothing else changes.
+select trigger_is('auth', 'users', 'clear_invited_password_on_confirm', 'private', 'clear_invited_password_on_confirm',
+  'auth.users has the confirm trigger');
+select ok(not has_function_privilege('authenticated', 'private.clear_invited_password_on_confirm()', 'execute')
+      and not has_function_privilege('anon', 'private.clear_invited_password_on_confirm()', 'execute'),
+  'the API roles cannot execute the confirm trigger function');
+update auth.users set email_confirmed_at = now()
+ where id in ('00000000-0000-4000-b000-000000000007', '00000000-0000-4000-b000-000000000008');
+select is((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000007'), '',
+  'confirming an invited account with a password drops the password');
+select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000008'), '',
+  'confirming a sign-up that was never invited keeps its password');
+update auth.users set email_confirmed_at = now(), invited_at = now()
+ where id = '00000000-0000-4000-b000-000000000003';
+select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000003'), '',
+  'an already confirmed account keeps its password');
 
 select * from finish();
 rollback;

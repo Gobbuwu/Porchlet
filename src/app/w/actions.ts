@@ -180,27 +180,11 @@ export async function inviteClient(_state: FormState, formData: FormData): Promi
     return answer(page, { error: code ?? GENERIC_ERROR, email }, form);
   }
   const link = inviteLink(origin, data.token);
-  // Before the email: an unconfirmed sign-up with the address is deleted, so the invite makes a
-  // fresh account with no password, which a later sign-up can't add one to (ADR 0024 M12). After it,
-  // whatever the email's outcome: a sign-up made in between kept its password, so it is deleted
-  // too, and the email (whose link that deletion broke) is sent once more. A second deletion ends
-  // as "email failed". When a check after a sent email fails, nobody knows whose password the
-  // emailed account holds, so the invitation is withdrawn (ADR 0024 section 7).
-  let sent: Awaited<ReturnType<typeof sendInviteEmail>> = "failed";
-  if ((await clearUnconfirmedSignup(supabase, data.invitation_id)) !== null) {
-    sent = await sendInviteEmail(email, link);
-    let after = await clearUnconfirmedSignup(supabase, data.invitation_id);
-    if (after !== null && after !== 0 && sent === "sent") {
-      sent = await sendInviteEmail(email, link);
-      after = await clearUnconfirmedSignup(supabase, data.invitation_id);
-    }
-    if (after === null && sent === "sent") {
-      const { error: withdrawError } = await supabase.from("invitations").delete().eq("id", data.invitation_id);
-      if (withdrawError) console.warn(`invite withdraw after a failed check failed: code=${withdrawError.code}`);
-      return answer(page, { error: "invite-check-failed", email }, form);
-    }
-    if (after !== 0) sent = "failed";
-  }
+  // An unconfirmed sign-up with the address is deleted first, so the invite makes a fresh account
+  // with no password; a database trigger drops any password an invited account has when it is
+  // confirmed (ADR 0024 section 7). If the check fails, no email is sent.
+  const cleared = await clearUnconfirmedSignup(supabase, data.invitation_id);
+  const sent = cleared === null ? "failed" : await sendInviteEmail(email, link);
   const notice =
     sent === "sent" ? "invite-sent" : sent === "has-account" ? "invite-has-account" : "invite-email-failed";
   const secure = isHttps(await headers());
