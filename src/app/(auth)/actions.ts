@@ -262,9 +262,11 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
   //   was never proven to be the owner's. So the confirmed account has no password until this
   //   session sets one. A type=email link to an account that is already confirmed (Supabase's own
   //   magic-link email, which Porchlet never sends) is treated the same way.
-  // If the new session can't be flagged it has been ended, and the link is used up.
+  // If the new session can't be flagged it has been ended, and the link is used up. A confirmation
+  // link has confirmed the address by then, and the account has no password, so the person is sent
+  // to "Forgot your password?" rather than told to ask for a new link.
   if (!(await flagSession(supabase, data.session?.access_token))) {
-    return answer(page, { error: "link-used" });
+    return answer(page, { error: type === "email" ? "confirmed-use-forgot" : "link-used" });
   }
   // A redirect from a Server Action renders its target in the same response, without the proxy
   // (measured: a flagged session's sign-in link showed /w), so the session is sent to /reset here

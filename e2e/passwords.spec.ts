@@ -74,12 +74,13 @@ test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }
 // email, so Porchlet checks the length itself (ADR 0021). 19 emoji are 76 bytes but only 38 UTF-16
 // units, under the field's maxlength of 72; the browser check is off anyway, as above.
 test("a password over 72 bytes is refused as too long, not as a bad email", async ({ page }) => {
-  await newAccountChoosingPassword(page, "long-multibyte");
+  const user = await newAccountChoosingPassword(page, "long-multibyte");
   await page.getByLabel(/^New password/).fill("😀".repeat(19));
   await page.getByRole("button", { name: "Save new password" }).click();
   await expect(alertIn(page)).toHaveText(
     "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
   );
+  expect(await passwordWorks(user.email, "😀".repeat(19)), "the refused password was not set").toBe(false);
 });
 
 // The check runs again at every login (ADR 0021). A password set by calling Supabase Auth

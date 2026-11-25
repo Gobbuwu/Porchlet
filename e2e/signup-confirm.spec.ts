@@ -35,6 +35,10 @@ test("someone else's sign-up: the owner confirms from the email they got, and on
   const owner = newUser("prehijack-click");
   const otherPassword = `${owner.password}-other`;
   await signUpDirectly(owner.email, otherPassword);
+  // Before the confirm, the other password gets the app's "confirm first" message.
+  await page.goto("/login");
+  await fillLogin(page, owner.email, otherPassword);
+  await expect(alertIn(page)).toHaveText("Confirm your email first. The link is in the email we sent you.");
   await confirmFromEmail(page, owner.email);
   // Confirmed, password not chosen yet (or never, if the owner leaves now): the other password
   // already signs nobody in. Choosing one would replace it anyway, so this is the moment to check.

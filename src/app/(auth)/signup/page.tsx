@@ -15,6 +15,9 @@ export default async function SignupPage({ searchParams }: PageProps<"/signup">)
       <AuthForm action={signUp} initialState={initialState} submitLabel="Create account" withEmail />
       <p>We&apos;ll email you a link. After you confirm your email, you choose your password.</p>
       <p>
+        Confirmed your email but left before choosing a password? <Link href="/forgot">Choose one here</Link>.
+      </p>
+      <p>
         Already have an account? <Link href="/login">Log in</Link>
       </p>
     </main>
