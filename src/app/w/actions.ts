@@ -183,15 +183,21 @@ export async function inviteClient(_state: FormState, formData: FormData): Promi
   // Before the email: an unconfirmed sign-up with the address is deleted, so the invite makes a
   // fresh account with no password, which a later sign-up can't add one to (ADR 0024 M12). After it,
   // whatever the email's outcome: a sign-up made in between kept its password, so it is deleted
-  // too, and the email (whose link that deletion broke) is sent once more. A failed check, or a
-  // second deletion, ends as "email failed" (ADR 0024 section 7).
+  // too, and the email (whose link that deletion broke) is sent once more. A second deletion ends
+  // as "email failed". When a check after a sent email fails, nobody knows whose password the
+  // emailed account holds, so the invitation is withdrawn (ADR 0024 section 7).
   let sent: Awaited<ReturnType<typeof sendInviteEmail>> = "failed";
   if ((await clearUnconfirmedSignup(supabase, data.invitation_id)) !== null) {
     sent = await sendInviteEmail(email, link);
     let after = await clearUnconfirmedSignup(supabase, data.invitation_id);
-    if (after !== 0 && sent === "sent") {
+    if (after !== null && after !== 0 && sent === "sent") {
       sent = await sendInviteEmail(email, link);
       after = await clearUnconfirmedSignup(supabase, data.invitation_id);
+    }
+    if (after === null && sent === "sent") {
+      const { error: withdrawError } = await supabase.from("invitations").delete().eq("id", data.invitation_id);
+      if (withdrawError) console.warn(`invite withdraw after a failed check failed: code=${withdrawError.code}`);
+      return answer(page, { error: "invite-check-failed", email }, form);
     }
     if (after !== 0) sent = "failed";
   }

@@ -136,13 +136,14 @@ check "create_invitation refuses repeatable read" \
   "$(grep -q 'create_invitation needs read committed, not repeatable read' <<<"$rr" && echo true)" "$rr"
 
 # 5. The cleanup against a re-invite. Session 1 stands in for Supabase Auth: it holds the account's
-# row lock for 2 seconds, as its update for a new invite would. Session 2 runs the cleanup, which
-# starts while the address has only an expired invitation and waits on that lock. Meanwhile the
-# new invitation commits. When session 1 ends, the cleanup re-checks the row and must keep it.
+# row lock for 2 seconds, as its update for a new invite would. Session 2 runs the cleanup for the
+# address (as the after-delete trigger does), which starts while the address has no open
+# invitation and waits on that lock. Meanwhile the new invitation commits. When session 1 ends,
+# the cleanup re-checks the row and must keep it. The address has no invitation row before the
+# race, so the hourly job (which only touches addresses Porchlet invited) can't delete the account
+# if it fires during the setup.
 sql "delete from public.invitations where workspace_id in ('$ws', '$ws2');
-     insert into auth.users (id, email, invited_at) values ('$reinvited', 'race-reinvited@example.test', now());
-     insert into public.invitations (workspace_id, email, token_hash, invited_by, expires_at)
-       values ('$ws', 'race-reinvited@example.test', extensions.digest('race-old', 'sha256'), '$owner', now() - interval '1 minute');" >/dev/null
+     insert into auth.users (id, email, invited_at) values ('$reinvited', 'race-reinvited@example.test', now());" >/dev/null
 PGAPPNAME=porchlet-race-s1 psql "$db" -X -q -tA -v ON_ERROR_STOP=1 >"$work/r1" 2>&1 <<SQL &
 begin;
 update auth.users set invited_at = now() where id = '$reinvited';
