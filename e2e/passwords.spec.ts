@@ -4,7 +4,8 @@ import {
   loginNeedsPasswordChange,
   newPasswordProblem,
 } from "../src/lib/auth/password-check";
-import { mailCount } from "./support/mail";
+import type { Page } from "@playwright/test";
+import { confirmLink } from "./support/mail";
 import { expect, test } from "./support/test";
 import {
   alertIn,
@@ -14,22 +15,47 @@ import {
   openResetLink,
   openSignInLink,
   setPasswordDirectly,
+  signUp,
   signUpAndConfirm,
+  supabaseEnv,
 } from "./support/users";
 
 // New passwords are checked against common and breached passwords (ADR 0019).
 
 const COMMON_MESSAGE = "Choose a different password: this one is too common or has appeared in a data breach.";
 
-test("sign-up with a common password is refused before an account is made", async ({ page }) => {
-  const user = newUser("common");
-  await page.goto("/signup");
-  await page.getByLabel("Email").fill(user.email);
+// A new account just after its confirm link, on the page where it chooses its first password
+// (sign-up asks only for the email, ADR 0027).
+async function newAccountChoosingPassword(page: Page, tag: string) {
+  const user = newUser(tag);
+  await signUp(page, user.email);
+  await page.goto(await confirmLink(user.email, /Confirm your Porchlet account/));
+  await page.getByRole("button", { name: "Confirm email" }).click();
+  await expect(page).toHaveURL(/\/reset\?notice=email-confirmed$/);
+  // The browser's length check is turned off, so the server decides.
+  const save = page.getByRole("button", { name: "Save new password" });
+  await page.locator("form", { has: save }).evaluate((f: HTMLFormElement) => (f.noValidate = true));
+  return user;
+}
+
+// Whether `password` signs `email` in, tried straight against Supabase Auth (past the app's checks).
+async function passwordWorks(email: string, password: string) {
+  const { url, key } = supabaseEnv();
+  const res = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: { apikey: key, "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  return res.status === 200;
+}
+
+test("a new account's first password can't be a common one", async ({ page }) => {
+  const user = await newAccountChoosingPassword(page, "common");
   // In the bundled list as "qwertyuiop"; the check ignores case.
-  await page.getByLabel(/^Password/).fill("QwertyUIOP");
-  await page.getByRole("button", { name: "Create account" }).click();
+  await page.getByLabel(/^New password/).fill("QwertyUIOP");
+  await page.getByRole("button", { name: "Save new password" }).click();
   await expect(alertIn(page)).toHaveText(COMMON_MESSAGE);
-  expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
+  expect(await passwordWorks(user.email, "QwertyUIOP"), "the refused password was not set").toBe(false);
 });
 
 // The minimum counts characters (code points), in Porchlet and in Supabase Auth (measured with
@@ -37,32 +63,23 @@ test("sign-up with a common password is refused before an account is made", asyn
 // 5 emoji are 5 characters, 20 bytes and 10 UTF-16 units. Browsers count the field's minlength
 // differently, so the browser check is turned off and the server decides.
 test("a password of 5 emoji (20 bytes) is refused as too short", async ({ page }) => {
-  const user = newUser("short-multibyte");
-  await page.goto("/signup");
-  const create = page.getByRole("button", { name: "Create account" });
-  await page.locator("form", { has: create }).evaluate((f: HTMLFormElement) => (f.noValidate = true));
-  await page.getByLabel("Email").fill(user.email);
-  await page.getByLabel(/^Password/).fill("😀".repeat(5));
-  await page.getByRole("button", { name: "Create account" }).click();
+  const user = await newAccountChoosingPassword(page, "short-multibyte");
+  await page.getByLabel(/^New password/).fill("😀".repeat(5));
+  await page.getByRole("button", { name: "Save new password" }).click();
   await expect(alertIn(page)).toHaveText("Choose a longer password: at least 10 characters.");
-  expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
+  expect(await passwordWorks(user.email, "😀".repeat(5)), "the refused password was not set").toBe(false);
 });
 
 // Supabase's maximum is 72 bytes, and it refuses longer passwords with the code it uses for a bad
 // email, so Porchlet checks the length itself (ADR 0021). 19 emoji are 76 bytes but only 38 UTF-16
 // units, under the field's maxlength of 72; the browser check is off anyway, as above.
 test("a password over 72 bytes is refused as too long, not as a bad email", async ({ page }) => {
-  const user = newUser("long-multibyte");
-  await page.goto("/signup");
-  const create = page.getByRole("button", { name: "Create account" });
-  await page.locator("form", { has: create }).evaluate((f: HTMLFormElement) => (f.noValidate = true));
-  await page.getByLabel("Email").fill(user.email);
-  await page.getByLabel(/^Password/).fill("😀".repeat(19));
-  await page.getByRole("button", { name: "Create account" }).click();
+  await newAccountChoosingPassword(page, "long-multibyte");
+  await page.getByLabel(/^New password/).fill("😀".repeat(19));
+  await page.getByRole("button", { name: "Save new password" }).click();
   await expect(alertIn(page)).toHaveText(
     "Choose a shorter password: at most 72 bytes, which is 72 plain letters or digits, or fewer with accents, other alphabets or emoji.",
   );
-  expect(await mailCount(user.email), "no confirmation email, so no account").toBe(0);
 });
 
 // The check runs again at every login (ADR 0021). A password set by calling Supabase Auth
@@ -114,9 +131,10 @@ test("a leftover flag cookie from another session doesn't hold up a different si
   await context.addCookies([{ ...session, name: "porchlet-password-change", value: "a-session-that-ended" }]);
   await page.goto("/w");
   await expect(page).toHaveURL(/\/w$/);
-  // Nor is it carried to the same user's sign-in link: the current session isn't the flagged one.
+  // Nor is its reason carried to the same user's sign-in link: the current session isn't the flagged
+  // one. The link's session must still choose a password, as every emailed link's does (ADR 0027).
   await openSignInLink(page, user.email);
-  await expect(page).toHaveURL(/\/w$/);
+  await expect(page).toHaveURL(/\/reset\?notice=email-confirmed$/);
 });
 
 test("a reset link doesn't get a flagged session past the change", async ({ page, context }) => {

@@ -106,6 +106,8 @@ The cleanup (section 5) now deletes an unused invited account even when it has a
 
 The same review found that the cleanup could delete an account being invited again at that moment: its delete waited on the row lock, then re-checked under a snapshot from before the new invitation (M14). The open-invitation check is now `private.has_open_invitation()`, a volatile function, whose query takes a fresh snapshot ("Function Volatility Categories" in the PostgreSQL docs).
 
+Since [ADR 0027](0027-password-chosen-after-confirmation.md), the trigger `clear_password_on_confirm` drops such a password on every account's confirmation, not only for addresses a Porchlet invitation names; `clear_invited_password_on_confirm` is gone.
+
 Withdrawing is limited to invitations not yet accepted: [ADR 0026](0026-withdraw-only-unaccepted-invitations.md).
 
 ## Consequences

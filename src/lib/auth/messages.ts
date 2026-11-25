@@ -26,6 +26,7 @@ export const MESSAGES = {
   "session-ended": "Your session has ended. Log in again.",
   "signup-disabled": "Sign-up is turned off on this site.",
   "signup-sent": "Check your email for a link to confirm your account.",
+  "email-confirmed": "Your email is confirmed. Choose a password to continue.",
   "reset-sent": "If an account uses that email, we sent it a link to choose a new password.",
   // Workspaces and projects (M2).
   "not-allowed": "You can't do that in this workspace.",

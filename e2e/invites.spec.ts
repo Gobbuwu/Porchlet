@@ -8,9 +8,18 @@ import {
   openInvitations,
   SITE,
 } from "./support/invites";
-import { confirmLink, mailCount } from "./support/mail";
+import { mailCount } from "./support/mail";
 import { expect, test, waitForHydration } from "./support/test";
-import { alertIn, fillLogin, newUser, readSession, signUp, signUpAndConfirm, supabaseEnv } from "./support/users";
+import {
+  alertIn,
+  confirmAndChoosePassword,
+  fillLogin,
+  newUser,
+  readSession,
+  signUp,
+  signUpAndConfirm,
+  supabaseEnv,
+} from "./support/users";
 import { createWorkspace, joinAsClient, logInAsAdmin, uniqueName } from "./support/workspaces";
 
 // M2 PR 3: invites (docs/milestones/M2.md, threat model T5, T6, T8, T9, T14; ADR 0024).
@@ -194,12 +203,11 @@ test("withdrawing an invitation deletes the unused account, so the address can s
   await expect(pageE).toHaveURL(/\/login\?next=%2Finvite%3Ftoken%3D[0-9a-f]{64}&error=invite-email-link-used$/);
   await expect(alertIn(pageE)).toHaveText(/^The sign-in part of this email's link has expired or was already used;/);
 
-  // With the invited account deleted, the person's own sign-up keeps their password (T8).
+  // With the invited account deleted, the address signs up normally and keeps the password it
+  // chooses (T8).
   const before = await mailCount(e.email);
-  await signUp(pageE, e.email, e.password);
-  await pageE.goto(await confirmLink(e.email, /Confirm your Porchlet account/, before));
-  await pageE.getByRole("button", { name: "Confirm email" }).click();
-  await expect(pageE).toHaveURL(/\/w$/);
+  await signUp(pageE, e.email);
+  await confirmAndChoosePassword(pageE, e.email, e.password, before);
   await pageE.getByRole("button", { name: "Log out" }).click();
   await expect(pageE).toHaveURL(/\/login\?signed_out=1$/);
   await fillLogin(pageE, e.email, e.password);
@@ -220,10 +228,8 @@ test("a pending invite, then the person's own sign-up: the email still gets them
   const ctx = await browser.newContext();
   const pageF = await ctx.newPage();
   const before = await mailCount(f.email);
-  await signUp(pageF, f.email, f.password);
-  await pageF.goto(await confirmLink(f.email, /Confirm your Porchlet account/, before));
-  await pageF.getByRole("button", { name: "Confirm email" }).click();
-  await expect(pageF).toHaveURL(/\/w$/);
+  await signUp(pageF, f.email);
+  await confirmAndChoosePassword(pageF, f.email, f.password, before);
 
   // The confirmation used up the invite email's sign-in part; the invitation is still open, and
   // this session is the invited address's, so the page offers to join.

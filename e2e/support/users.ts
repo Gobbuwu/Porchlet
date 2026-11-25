@@ -15,21 +15,44 @@ export async function fillLogin(page: Page, email: string, password: string) {
   await page.getByRole("button", { name: "Log in" }).click();
 }
 
-export async function signUp(page: Page, email: string, password: string) {
+// Sign-up asks only for the email; the password is chosen after the confirm link (ADR 0027).
+export async function signUp(page: Page, email: string) {
   await page.goto("/signup");
   await page.getByLabel("Email").fill(email);
-  await page.getByLabel(/^Password/).fill(password);
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.getByRole("status")).toHaveText("Check your email for a link to confirm your account.");
 }
 
-// Signs up through the UI and follows the confirmation email, ending signed in on /w.
+// Presses the button on the newest confirmation email's link, ending on the page where the new
+// account chooses its password (ADR 0027). `before` is how many emails the address had before the
+// sign-up.
+export async function confirmFromEmail(page: Page, email: string, before = 0) {
+  await page.goto(await confirmLink(email, /Confirm your Porchlet account/, before));
+  await page.getByRole("button", { name: "Confirm email" }).click();
+  await expect(page).toHaveURL(/\/reset\?notice=email-confirmed$/);
+  await expect(page.getByRole("status")).toHaveText("Your email is confirmed. Choose a password to continue.");
+  // An emailed link's session sets the password without a current one (ADR 0023).
+  await expect(page.getByLabel("Current password")).toHaveCount(0);
+}
+
+// On that page, chooses the password, ending signed in on /w.
+export async function chooseFirstPassword(page: Page, password: string) {
+  await page.getByLabel(/^New password/).fill(password);
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(page).toHaveURL(/\/w\?password=changed$/);
+}
+
+export async function confirmAndChoosePassword(page: Page, email: string, password: string, before = 0) {
+  await confirmFromEmail(page, email, before);
+  await chooseFirstPassword(page, password);
+}
+
+// Signs up through the UI, follows the confirmation email and chooses the password, ending signed
+// in on /w.
 export async function signUpAndConfirm(page: Page, tag: string) {
   const user = newUser(tag);
-  await signUp(page, user.email, user.password);
-  await page.goto(await confirmLink(user.email, /Confirm your Porchlet account/));
-  await page.getByRole("button", { name: "Confirm email" }).click();
-  await expect(page).toHaveURL(/\/w$/);
+  await signUp(page, user.email);
+  await confirmAndChoosePassword(page, user.email, user.password);
   return user;
 }
 

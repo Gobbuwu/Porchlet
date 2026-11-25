@@ -60,9 +60,10 @@ test.describe("with JavaScript turned off", () => {
   test("sign-up, confirm, new password, reset request and a bad link all show their messages", async ({
     page,
   }) => {
-    // Sign-up notice (checked inside signUp) and the email confirmation, all without JavaScript.
+    // Sign-up notice, the email confirmation and the first password (checked inside the helpers), all
+    // without JavaScript.
     const user = await signUpAndConfirm(page, "nojs-flow");
-    await expect(page).toHaveURL(/\/w$/);
+    await expect(page).toHaveURL(/\/w\?password=changed$/);
 
     // /reset is open to a signed-in user. Its errors come back to it.
     await page.goto("/reset");
@@ -91,7 +92,7 @@ test.describe("with JavaScript turned off", () => {
 
   test("sign-up's notice shows", async ({ page }) => {
     const user = newUser("nojs-signup");
-    await signUp(page, user.email, user.password);
+    await signUp(page, user.email);
     await expect(page).toHaveURL(/\/signup\?notice=signup-sent$/);
   });
 });

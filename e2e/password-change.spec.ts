@@ -100,16 +100,19 @@ test("another account's link in a flagged browser isn't given that flag", async 
   // B signs up in another browser but confirms in this one, after A was flagged here.
   const b = newUser("flag-other-b");
   const other = await browser.newContext();
-  await signUp(await other.newPage(), b.email, b.password);
+  await signUp(await other.newPage(), b.email);
   await other.close();
   await flaggedUser(page, context, "flag-other-a");
   await page.goto(await confirmLink(b.email, /Confirm your Porchlet account/));
   await page.getByRole("button", { name: "Confirm email" }).click();
-  await expect(page).toHaveURL(/\/w$/);
+  // Every confirm link's session chooses a password (ADR 0027), but B isn't told it logged in with
+  // a bad one.
+  await expect(page).toHaveURL(/\/reset\?notice=email-confirmed$/);
   await page.goto("/w");
-  await expect(page).toHaveURL(/\/w$/);
+  await expect(page).toHaveURL(/\/reset\?error=new-password-required$/);
+  await expect(alertIn(page)).toHaveText(NEW_PASSWORD_REQUIRED);
 
-  // B's reset link here: B must save a new password, but isn't told it logged in with a bad one.
+  // B's reset link here: the same.
   await openResetLink(page, b.email);
   await page.goto("/w");
   await expect(page).toHaveURL(/\/reset\?error=new-password-required$/);

@@ -1,5 +1,6 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
 import { isAuthSessionMissingError } from "@supabase/supabase-js";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -93,10 +94,10 @@ export async function signUp(_state: FormState, formData: FormData): Promise<For
   const supabase = await createClient();
   const taken = await takeAttempt(supabase, RULES.signUp);
   if ("error" in taken) return answer("/signup", { error: taken.error, email });
-  const password = field(formData, "password");
-  // Checked before Supabase sees the email, so the answer is the same for every address.
-  const problem = await newPasswordProblem(password);
-  if (problem) return answer("/signup", { error: problem, email });
+  // Sign-up asks only for the email (ADR 0027). Supabase Auth needs a password to create the
+  // account, so it gets a random one that nobody knows; confirming the address drops it (migration
+  // 20261125060000), and the person chooses their password after the confirm link.
+  const password = randomBytes(32).toString("base64url");
   const { error } = await supabase.auth.signUp({ email, password });
   // Same answer whether or not the email already has an account. Supabase Auth itself answers
   // 422 user_already_exists for a confirmed address (measured, ADR 0014), so the page hides it.
@@ -253,19 +254,24 @@ export async function confirmEmailLink(_state: FormState, formData: FormData): P
     // The reason the database gave, or a general one; the account works either way.
     redirect(acceptError ? `/reset?error=${acceptCode ?? "invite-not-joined"}` : "/reset?notice=invite-joined");
   }
-  // A reset link's session exists to set a new password, and Supabase Auth lets it do so without
-  // the current one, so it can't open the app until it has (ADR 0023): otherwise the link would
-  // be a way into the app that leaves the old password in place.
-  const mustChange = type === "recovery" || (!!flaggedUser && flaggedUser === data.user?.id);
+  // Every other emailed link's session must set a password before it can open the app:
+  // - A reset link's session exists to set a new password, and Supabase Auth lets it do so without
+  //   the current one (ADR 0023): otherwise the link would be a way into the app that leaves the old
+  //   password in place.
+  // - Confirming an address drops any password the account had (ADR 0027): one stored by a sign-up
+  //   was never proven to be the owner's. So the confirmed account has no password until this
+  //   session sets one. A type=email link to an account that is already confirmed (Supabase's own
+  //   magic-link email, which Porchlet never sends) is treated the same way.
   // If the new session can't be flagged it has been ended, and the link is used up.
-  if (mustChange && !(await flagSession(supabase, data.session?.access_token))) {
+  if (!(await flagSession(supabase, data.session?.access_token))) {
     return answer(page, { error: "link-used" });
   }
-  if (type === "recovery") redirect("/reset");
   // A redirect from a Server Action renders its target in the same response, without the proxy
-  // (measured: a flagged session's sign-in link showed /w), so a flagged session is sent to /reset
-  // here rather than left to the proxy.
-  redirect(mustChange ? "/reset?error=new-password-required" : "/w");
+  // (measured: a flagged session's sign-in link showed /w), so the session is sent to /reset here
+  // rather than left to the proxy. A session flagged by the login check before this link keeps its
+  // reason (ADR 0021).
+  if (type === "recovery") redirect("/reset");
+  redirect(flaggedUser && flaggedUser === data.user?.id ? "/reset?error=new-password-required" : "/reset?notice=email-confirmed");
 }
 
 export async function logOut(): Promise<void> {
