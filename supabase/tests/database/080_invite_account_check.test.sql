@@ -1,11 +1,12 @@
 -- The invite flow's account check (M2 PR 3, ADR 0024 section 7): before the invite email, the
 -- owner deletes the invited address's unconfirmed, never-signed-in account that has a password
 -- (someone else's sign-up would keep that password); every other account stays. Confirming an
--- invited account drops any password it has. Also the cleanup's volatile open-invitation check.
+-- account that an unaccepted Porchlet invitation names drops a password it already had. Also the
+-- cleanup's volatile open-invitation check and its handling of invited accounts with a password.
 -- Migration 20261125040000_invite_account_check.sql.
 -- Covers: public.invitations
 begin;
-select plan(25);
+select plan(27);
 
 -- A owns X, B owns Y. Q* are accounts with each invitation's address.
 insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_at) values
@@ -21,13 +22,14 @@ insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_
   ('00000000-0000-4000-b000-000000000008', 'q8@example.test', null, null, null),     -- own sign-up, not invited
   ('00000000-0000-4000-b000-000000000009', 'q9@example.test', null, now(), null),    -- invited outside Porchlet, with a password
   ('00000000-0000-4000-b000-000000000010', 'q10@example.test', null, now(), null),   -- invited by Porchlet, no password yet
-  ('00000000-0000-4000-b000-000000000011', 'q11@example.test', null, now(), null);   -- invited by Porchlet, with a password
+  ('00000000-0000-4000-b000-000000000011', 'q11@example.test', null, now(), null),   -- invited by Porchlet, with a password
+  ('00000000-0000-4000-b000-000000000012', 'q12@example.test', null, now(), null);   -- only an accepted Porchlet row, then a dashboard invite
 update auth.users set encrypted_password = extensions.crypt('someone-elses-password', extensions.gen_salt('bf'))
  where id in ('00000000-0000-4000-b000-000000000001', '00000000-0000-4000-b000-000000000003',
               '00000000-0000-4000-b000-000000000004', '00000000-0000-4000-b000-000000000005',
               '00000000-0000-4000-b000-000000000006', '00000000-0000-4000-b000-000000000007',
               '00000000-0000-4000-b000-000000000008', '00000000-0000-4000-b000-000000000009',
-              '00000000-0000-4000-b000-000000000011');
+              '00000000-0000-4000-b000-000000000011', '00000000-0000-4000-b000-000000000012');
 insert into public.workspaces (id, name, created_by) values
   ('00000000-0000-4000-c000-0000000000f1', 'X', '00000000-0000-4000-a000-00000000000a'),
   ('00000000-0000-4000-c000-0000000000f2', 'Y', '00000000-0000-4000-a000-00000000000b');
@@ -45,7 +47,8 @@ insert into public.invitations (id, workspace_id, email, token_hash, invited_by,
   ('00000000-0000-4000-d000-000000000008', '00000000-0000-4000-c000-0000000000f2', 'q1@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', now()),
   ('00000000-0000-4000-d000-000000000009', '00000000-0000-4000-c000-0000000000f2', 'q7@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
   ('00000000-0000-4000-d000-000000000010', '00000000-0000-4000-c000-0000000000f2', 'q10@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
-  ('00000000-0000-4000-d000-000000000011', '00000000-0000-4000-c000-0000000000f2', 'q11@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null);
+  ('00000000-0000-4000-d000-000000000011', '00000000-0000-4000-c000-0000000000f2', 'q11@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000012', '00000000-0000-4000-c000-0000000000f2', 'q12@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() - interval '1 day', now() - interval '2 days');
 
 create function pg_temp.exists_user(p_id uuid) returns boolean language sql as
   $$ select exists (select 1 from auth.users where id = p_id) $$;
@@ -114,27 +117,34 @@ select ok(not has_function_privilege('authenticated', 'private.clear_invited_pas
   'the API roles cannot execute the confirm trigger function');
 update auth.users set email_confirmed_at = now()
  where id in ('00000000-0000-4000-b000-000000000007', '00000000-0000-4000-b000-000000000008');
-select is((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000007'), '',
+select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-b000-000000000007' and coalesce(encrypted_password, '') = ''),
   'confirming an invited account with a password drops the password');
-select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000008'), '',
+select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-b000-000000000008' and coalesce(encrypted_password, '') <> ''),
   'confirming a sign-up that was never invited keeps its password');
 update auth.users set email_confirmed_at = now(), invited_at = now()
  where id = '00000000-0000-4000-b000-000000000003';
-select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000003'), '',
+select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-b000-000000000003' and coalesce(encrypted_password, '') <> ''),
   'an already confirmed account keeps its password');
 
 -- 23-25. Passwords the trigger keeps, and the cleanup of an invited account with a password.
 update auth.users set email_confirmed_at = now() where id = '00000000-0000-4000-b000-000000000009';
-select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000009'), '',
+select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-b000-000000000009' and coalesce(encrypted_password, '') <> ''),
   'an account no Porchlet invitation names keeps its password when confirmed');
 update auth.users set email_confirmed_at = now(),
        encrypted_password = extensions.crypt('chosen-by-admin', extensions.gen_salt('bf'))
  where id = '00000000-0000-4000-b000-000000000010';
-select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000010'), '',
+select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-b000-000000000010' and coalesce(encrypted_password, '') <> ''),
   'a password set by the confirming update itself is kept');
 delete from public.invitations where id = '00000000-0000-4000-d000-000000000011';
 select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000011'),
   'withdrawing deletes an unused invited account even when it has a password');
+
+-- 26-27. An address whose only Porchlet invitation was accepted: the hourly job leaves its
+-- unconfirmed account alone, and confirming keeps its password (a dashboard invite's case).
+select is(private.delete_unused_invited_users(), 0, 'the hourly job deletes nothing here');
+update auth.users set email_confirmed_at = now() where id = '00000000-0000-4000-b000-000000000012';
+select ok(exists (select 1 from auth.users where id = '00000000-0000-4000-b000-000000000012' and coalesce(encrypted_password, '') <> ''),
+  'an account only an accepted Porchlet invitation names keeps its password when confirmed');
 
 select * from finish();
 rollback;

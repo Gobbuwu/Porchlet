@@ -209,8 +209,8 @@ async function clearUnconfirmedSignup(supabase: SupabaseClient, invitationId: st
   return data;
 }
 
-// An owner withdraws an invitation (the owners' delete policy). A trigger then deletes the account
-// the invite email made, if nobody used it and no other invitation for that address is open (T8).
+// An owner withdraws an invitation (the owners' delete policy). A trigger then deletes the invited
+// account if nobody used it and no other invitation for that address is open (T8, ADR 0024).
 export async function revokeInvitation(_state: FormState, formData: FormData): Promise<FormState> {
   const workspaceId = field(formData, "workspace_id");
   const invitationId = field(formData, "invitation_id");
