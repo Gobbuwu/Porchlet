@@ -167,6 +167,10 @@ jobs:
           scripts/ci/in-playwright-image.sh sh -c 'echo "Playwright image: $0"; echo "Node in image: $(node --version)"; ls /ms-playwright' "$PLAYWRIGHT_IMAGE" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Point the app at local Supabase
         run: scripts/e2e/write-env.sh
+      # Only the instance admin may create workspaces (decision D4, ADR 0025); the workspace E2E
+      # tests log in as this one.
+      - name: Make the E2E instance admin
+        run: scripts/e2e/make-admin.sh
       # Supabase Auth itself must honour the session limits (ADR 0020); browser-independent.
       - name: Session limits against the real Auth server
         if: matrix.browser == 'chromium'

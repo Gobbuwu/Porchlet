@@ -47,3 +47,15 @@ button {
     color: #a5d6a7;
   }
 }
+
+.items {
+  padding-left: 1.25rem;
+}
+
+.items > li {
+  margin-bottom: 1rem;
+}
+
+.items form {
+  margin-top: 0.5rem;
+}

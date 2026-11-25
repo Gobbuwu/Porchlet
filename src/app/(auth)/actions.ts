@@ -3,12 +3,13 @@
 import { isAuthSessionMissingError } from "@supabase/supabase-js";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { authErrorCode, GENERIC_ERROR, MESSAGES, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
+import { authErrorCode, GENERIC_ERROR, type MessageCode, TOO_MANY_ATTEMPTS } from "@/lib/auth/messages";
 import { loginNeedsPasswordChange, newPasswordProblem } from "@/lib/auth/password-check";
 import { clientIp, releaseLimits, type Rule, RULES, takeLimits } from "@/lib/auth/rate-limit";
 import { safeNext } from "@/lib/auth/redirect";
 import { startedFromEmailedLink } from "@/lib/auth/session";
 import type { FormState } from "@/lib/auth/types";
+import { answer, field } from "@/lib/form-answer";
 import { isHttps } from "@/lib/http";
 import { hardenCookie, passwordChangeCookieName } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
@@ -16,34 +17,6 @@ import { createClient } from "@/lib/supabase/server";
 // Auth runs here, on the server, so the session cookie can be HttpOnly (ADR 0014).
 // Next.js checks that each Server Action POST comes from this site's Origin
 // (node_modules/next/dist/docs/01-app/02-guides/data-security.md).
-
-const field = (formData: FormData, name: string) => {
-  const value = formData.get(name);
-  return typeof value === "string" ? value : "";
-};
-
-type Outcome = { error?: MessageCode; notice?: MessageCode; email?: string };
-
-// Answers a form post. When the hydrated page sent it (React's fetch, which carries Next.js's
-// Next-Action header), the result goes back to useActionState. A native form post (sent before
-// React hydrated, or with JavaScript off) is redirected to `page` with the message code in the
-// URL instead (Post/Redirect/Get), and the page shows the message: Next.js 16.4 renders the
-// response to such a post by resuming the prerendered shell, and React's resume() takes no form
-// state, so useActionState would show nothing (measured; ADR 0018, Next.js issue #99756).
-// The typed email is not put in the URL, so that path doesn't keep it.
-async function answer(page: string, outcome: Outcome): Promise<FormState> {
-  if ((await headers()).has("next-action")) {
-    const state: FormState = {};
-    if (outcome.error) state.error = MESSAGES[outcome.error];
-    if (outcome.notice) state.notice = MESSAGES[outcome.notice];
-    if (outcome.email !== undefined) state.email = outcome.email;
-    return state;
-  }
-  const url = new URL(page, "http://porchlet.invalid");
-  if (outcome.error) url.searchParams.set("error", outcome.error);
-  if (outcome.notice) url.searchParams.set("notice", outcome.notice);
-  redirect(url.pathname + url.search);
-}
 
 // Counts this attempt against Porchlet's per-visitor limits (ADR 0015, 0022). Returns a message
 // code for the form when the visitor is over a limit or the limiter can't answer; otherwise the
