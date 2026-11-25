@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AuthForm } from "@/components/auth-form";
-import { PasswordField } from "@/components/fields";
 import { formStateFromParams } from "@/lib/auth/types";
 import { signUp } from "../actions";
 
@@ -12,9 +11,12 @@ export default async function SignupPage({ searchParams }: PageProps<"/signup">)
   return (
     <main className="narrow">
       <h1>Create an account</h1>
-      <AuthForm action={signUp} initialState={initialState} submitLabel="Create account" withEmail>
-        <PasswordField label="Password (at least 10 characters)" autoComplete="new-password" />
-      </AuthForm>
+      {/* Only the email: the password is chosen after the confirm link proves the address (ADR 0027). */}
+      <AuthForm action={signUp} initialState={initialState} submitLabel="Create account" withEmail />
+      <p>We&apos;ll email you a link. After you confirm your email, you choose your password.</p>
+      <p>
+        Confirmed your email but left before choosing a password? <Link href="/forgot">Choose one here</Link>.
+      </p>
       <p>
         Already have an account? <Link href="/login">Log in</Link>
       </p>

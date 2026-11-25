@@ -16,14 +16,15 @@ import {
 
 test("sign-up needs the emailed confirmation, then login and logout work", async ({ page, context }) => {
   const user = newUser("signup");
-  await signUp(page, user.email, user.password);
+  // The form asks only for the email (ADR 0027).
+  await page.goto("/signup");
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  await signUp(page, user.email);
 
-  // Not confirmed yet: login is refused.
+  // Not confirmed yet, and the account has no password anyone knows: login is refused.
   await page.goto("/login");
   await fillLogin(page, user.email, user.password);
-  await expect(alertIn(page)).toHaveText(
-    "Confirm your email first. The link is in the email we sent you.",
-  );
+  await expect(alertIn(page)).toHaveText("Wrong email or password.");
 
   // Opening the link alone changes nothing (mail scanners open links); the button confirms.
   const link = await confirmLink(user.email, /Confirm your Porchlet account/);
@@ -33,7 +34,13 @@ test("sign-up needs the emailed confirmation, then login and logout work", async
   await expect(page).toHaveURL(/\/login\?next=%2Fw$/);
   await page.goto(link);
   await page.getByRole("button", { name: "Confirm email" }).click();
-  await expect(page).toHaveURL(/\/w$/);
+  // Confirmed, and signed in, but the app stays closed until a password is chosen (ADR 0027).
+  await expect(page).toHaveURL(/\/reset\?notice=email-confirmed$/);
+  await page.goto("/w");
+  await expect(page).toHaveURL(/\/reset\?error=new-password-required$/);
+  await page.getByLabel(/^New password/).fill(user.password);
+  await page.getByRole("button", { name: "Save new password" }).click();
+  await expect(page).toHaveURL(/\/w\?password=changed$/);
   await expect(page.getByText(`Signed in as ${user.email}.`)).toBeVisible();
 
   // Sign-up through Supabase Auth created the user's profile (PR 9's trigger), and the user's
@@ -86,7 +93,7 @@ test("signing up again with a used email looks the same and sends no email", asy
   const user = await signUpAndConfirm(page, "dupe");
   await page.context().clearCookies();
   const before = await mailCount(user.email);
-  await signUp(page, user.email, newUser("x").password);
+  await signUp(page, user.email);
   // Give a stray email time to arrive before counting.
   await page.waitForTimeout(2_000);
   expect(await mailCount(user.email)).toBe(before);
