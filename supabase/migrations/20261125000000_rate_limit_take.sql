@@ -106,7 +106,7 @@ begin
     where (select count(*) from private.rate_limit_hits h
            where h.bucket = r.bucket and h.at > now() - make_interval(secs => r.win)) >= r.lim
   ) then
-    return '{}';
+    return '{}'::bigint[];
   end if;
 
   with ins as (

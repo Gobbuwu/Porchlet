@@ -42,7 +42,7 @@ Option 1.
   - Supabase answers 429 (it refused before checking the password): the slot is given back;
   - any other error, including a wrong password: the slot stays, as a failure.
 
-Measured after the change, same setup: all 6 tests in `e2e/rate-limit.spec.ts` passed 5 times in a row (30 of 30), each parallel test letting through exactly the limit. Tests:
+Measured after the change, same setup: the 6 tests then in `e2e/rate-limit.spec.ts` passed 5 times in a row (30 of 30), each parallel test letting through exactly the limit; with "successful logins give their attempt back" added, all 7 passed 4 times in a row (28 of 28). Tests:
 
 - `supabase/tests/database/020_rate_limit.test.sql`: taking up to the limit, all-or-nothing across rules, release, wrong key, bad arguments.
 - `e2e/rate-limit.spec.ts`: the three parallel tests above, and "successful logins give their attempt back", which failed when the give-back was removed (5 of 8 right-password logins got through, then "Too many attempts").
