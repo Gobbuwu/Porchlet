@@ -5,7 +5,7 @@
 -- Migration 20261125040000_invite_account_check.sql.
 -- Covers: public.invitations
 begin;
-select plan(22);
+select plan(25);
 
 -- A owns X, B owns Y. Q* are accounts with each invitation's address.
 insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_at) values
@@ -18,12 +18,16 @@ insert into auth.users (id, email, email_confirmed_at, invited_at, last_sign_in_
   ('00000000-0000-4000-b000-000000000005', 'Q5@Example.TEST', null, now(), null),    -- sign-up then invite, mixed case
   ('00000000-0000-4000-b000-000000000006', 'q6@example.test', now(), null, null),    -- confirmed, never signed in
   ('00000000-0000-4000-b000-000000000007', 'q7@example.test', null, now(), null),    -- invited, with a password
-  ('00000000-0000-4000-b000-000000000008', 'q8@example.test', null, null, null);     -- own sign-up, not invited
+  ('00000000-0000-4000-b000-000000000008', 'q8@example.test', null, null, null),     -- own sign-up, not invited
+  ('00000000-0000-4000-b000-000000000009', 'q9@example.test', null, now(), null),    -- invited outside Porchlet, with a password
+  ('00000000-0000-4000-b000-000000000010', 'q10@example.test', null, now(), null),   -- invited by Porchlet, no password yet
+  ('00000000-0000-4000-b000-000000000011', 'q11@example.test', null, now(), null);   -- invited by Porchlet, with a password
 update auth.users set encrypted_password = extensions.crypt('someone-elses-password', extensions.gen_salt('bf'))
  where id in ('00000000-0000-4000-b000-000000000001', '00000000-0000-4000-b000-000000000003',
               '00000000-0000-4000-b000-000000000004', '00000000-0000-4000-b000-000000000005',
               '00000000-0000-4000-b000-000000000006', '00000000-0000-4000-b000-000000000007',
-              '00000000-0000-4000-b000-000000000008');
+              '00000000-0000-4000-b000-000000000008', '00000000-0000-4000-b000-000000000009',
+              '00000000-0000-4000-b000-000000000011');
 insert into public.workspaces (id, name, created_by) values
   ('00000000-0000-4000-c000-0000000000f1', 'X', '00000000-0000-4000-a000-00000000000a'),
   ('00000000-0000-4000-c000-0000000000f2', 'Y', '00000000-0000-4000-a000-00000000000b');
@@ -38,7 +42,10 @@ insert into public.invitations (id, workspace_id, email, token_hash, invited_by,
   ('00000000-0000-4000-d000-000000000005', '00000000-0000-4000-c000-0000000000f1', 'q5@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
   ('00000000-0000-4000-d000-000000000006', '00000000-0000-4000-c000-0000000000f1', 'q6@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now() + interval '7 days', null),
   ('00000000-0000-4000-d000-000000000007', '00000000-0000-4000-c000-0000000000f2', 'q1@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() - interval '1 minute', null),
-  ('00000000-0000-4000-d000-000000000008', '00000000-0000-4000-c000-0000000000f2', 'q1@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', now());
+  ('00000000-0000-4000-d000-000000000008', '00000000-0000-4000-c000-0000000000f2', 'q1@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', now()),
+  ('00000000-0000-4000-d000-000000000009', '00000000-0000-4000-c000-0000000000f2', 'q7@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000010', '00000000-0000-4000-c000-0000000000f2', 'q10@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null),
+  ('00000000-0000-4000-d000-000000000011', '00000000-0000-4000-c000-0000000000f2', 'q11@example.test', extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000b', now() + interval '7 days', null);
 
 create function pg_temp.exists_user(p_id uuid) returns boolean language sql as
   $$ select exists (select 1 from auth.users where id = p_id) $$;
@@ -115,6 +122,19 @@ update auth.users set email_confirmed_at = now(), invited_at = now()
  where id = '00000000-0000-4000-b000-000000000003';
 select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000003'), '',
   'an already confirmed account keeps its password');
+
+-- 23-25. Passwords the trigger keeps, and the cleanup of an invited account with a password.
+update auth.users set email_confirmed_at = now() where id = '00000000-0000-4000-b000-000000000009';
+select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000009'), '',
+  'an account no Porchlet invitation names keeps its password when confirmed');
+update auth.users set email_confirmed_at = now(),
+       encrypted_password = extensions.crypt('chosen-by-admin', extensions.gen_salt('bf'))
+ where id = '00000000-0000-4000-b000-000000000010';
+select isnt((select coalesce(encrypted_password, '') from auth.users where id = '00000000-0000-4000-b000-000000000010'), '',
+  'a password set by the confirming update itself is kept');
+delete from public.invitations where id = '00000000-0000-4000-d000-000000000011';
+select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000011'),
+  'withdrawing deletes an unused invited account even when it has a password');
 
 select * from finish();
 rollback;

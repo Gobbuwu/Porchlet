@@ -10,7 +10,7 @@ import {
 } from "./support/invites";
 import { confirmLink, mailCount } from "./support/mail";
 import { expect, test, waitForHydration } from "./support/test";
-import { alertIn, fillLogin, newUser, signUp, signUpAndConfirm, supabaseEnv } from "./support/users";
+import { alertIn, fillLogin, newUser, readSession, signUp, signUpAndConfirm, supabaseEnv } from "./support/users";
 import { createWorkspace, joinAsClient, logInAsAdmin, uniqueName } from "./support/workspaces";
 
 // M2 PR 3: invites (docs/milestones/M2.md, threat model T5, T6, T8, T9, T14; ADR 0024).
@@ -121,10 +121,17 @@ test("someone's earlier sign-up with the address is replaced, so its password ne
   await ownerWorkspace(page, "Invite pre-signup");
   const client = newUser("presignup");
   const otherPassword = `${client.password}-other`;
-  // Anyone who knows the address signs up with it first and doesn't confirm.
-  const otherCtx = await browser.newContext();
-  await signUp(await otherCtx.newPage(), client.email, otherPassword);
-  await otherCtx.close();
+  // Anyone who knows the address signs up with it first (straight to Supabase Auth, which gives
+  // the account's id) and doesn't confirm.
+  const { url, key } = supabaseEnv();
+  const signup = await fetch(`${url}/auth/v1/signup`, {
+    method: "POST",
+    headers: { apikey: key, "content-type": "application/json" },
+    body: JSON.stringify({ email: client.email, password: otherPassword }),
+  });
+  expect(signup.status).toBe(200);
+  const otherId = ((await signup.json()) as { id?: string }).id;
+  expect(otherId).toMatch(/^[0-9a-f-]{36}$/);
 
   await inviteFromPage(page, client.email, EMAILED);
   const ctx = await browser.newContext();
@@ -132,10 +139,14 @@ test("someone's earlier sign-up with the address is replaced, so its password ne
   await invitee.goto(await inviteEmailLink(client.email));
   await invitee.getByRole("button", { name: "Accept invitation" }).click();
   await expect(invitee).toHaveURL(/\/reset\?notice=invite-joined$/);
+  // The invite deleted that sign-up before its email, so the invited person is a new account.
+  const token = (await readSession(ctx)).access_token;
+  const sub = (JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { sub?: string }).sub;
+  expect(sub).toMatch(/^[0-9a-f-]{36}$/);
+  expect(sub).not.toBe(otherId);
 
   // The earlier sign-up's password, tried straight against Supabase Auth (past the app's login),
-  // signs nobody in: the invite made a fresh account (ADR 0024 section 7).
-  const { url, key } = supabaseEnv();
+  // signs nobody in (ADR 0024 section 7).
   const res = await fetch(`${url}/auth/v1/token?grant_type=password`, {
     method: "POST",
     headers: { apikey: key, "content-type": "application/json" },

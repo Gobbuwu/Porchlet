@@ -99,8 +99,10 @@ select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000010')
   'another workspace''s owner deletes nothing, so no account goes either');
 select ok(pg_temp.exists_user('00000000-0000-4000-a000-00000000000a') and pg_temp.exists_user('00000000-0000-4000-a000-00000000000b'),
   'owners'' own accounts stay');
-select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000012'),
-  'an account the person signed up for themselves, invited before they confirmed, is never deleted');
+-- Changed by 20261125040000 (ADR 0024 section 7, Gobbu's OK on 2026-11-25): an unconfirmed sign-up
+-- the invite reused goes with the invitation, password and all.
+select ok(not pg_temp.exists_user('00000000-0000-4000-b000-000000000012'),
+  'an unconfirmed sign-up that an invite reused is deleted with its last invitation, password and all');
 
 -- 16-21. Expiry: the hourly job.
 select is(private.delete_unused_invited_users(), 1, 'the hourly job deletes one account (p6)');

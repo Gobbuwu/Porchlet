@@ -11,12 +11,17 @@
 --       person then sets opens it. An invited account is confirmed only by a link sent to the
 --       address, so the person who confirms it is the address's owner.
 --
--- 2. The cleanup's "no open invitation" check moves into a volatile function. A delete that waits on
+-- 2. The cleanup no longer keeps an invited account that has a password: since 1a, such an
+--    account is an unconfirmed sign-up that the invite reused (a sign-up in the moment before the
+--    email, or an invite sent outside Porchlet's invite action), and Gobbu approved deleting
+--    unconfirmed sign-ups through the invite path (2026-11-25, M2.md section 10).
+--
+-- 3. The cleanup's "no open invitation" check moves into a volatile function. A delete that waits on
 --    the account's row lock (Supabase Auth updating it for a new invite) re-checks the row under the
 --    statement's old snapshot, which can't see an invitation committed meanwhile; a volatile
 --    function's query takes a fresh snapshot (PostgreSQL docs, "Function Volatility Categories").
 
--- Whether an invitation for the address is still open. Volatile on purpose (see 2 above).
+-- Whether an invitation for the address is still open. Volatile on purpose (see 3 above).
 create function private.has_open_invitation(p_email text) returns boolean
 language plpgsql
 volatile
@@ -42,7 +47,6 @@ begin
    where u.invited_at is not null
      and u.email_confirmed_at is null
      and u.last_sign_in_at is null
-     and coalesce(u.encrypted_password, '') = ''
      and (case when p_email is null
                then exists (select 1 from public.invitations i where i.email = lower(u.email))
                else lower(u.email) = lower(p_email) end)
@@ -85,7 +89,9 @@ begin
 end;
 $$;
 
--- 1b: on the update that confirms an invited account's address, drop any password it has.
+-- 1b: on the update that confirms the address of an account Porchlet invited, drop a password the
+-- account already had. A password set by that same update (an admin setting one while confirming)
+-- is kept, and so is the password of an account no Porchlet invitation names.
 create function private.clear_invited_password_on_confirm() returns trigger
 language plpgsql
 security definer
@@ -93,7 +99,9 @@ set search_path = ''
 as $$
 begin
   if old.email_confirmed_at is null and new.email_confirmed_at is not null
-     and new.invited_at is not null and coalesce(new.encrypted_password, '') <> '' then
+     and new.invited_at is not null and coalesce(new.encrypted_password, '') <> ''
+     and new.encrypted_password is not distinct from old.encrypted_password
+     and exists (select 1 from public.invitations i where i.email = lower(new.email)) then
     new.encrypted_password := '';
   end if;
   return new;
