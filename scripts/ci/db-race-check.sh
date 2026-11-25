@@ -10,7 +10,10 @@
 #   4. create_invitation refuses repeatable read (its counts would come from an old snapshot);
 #   5. the invite cleanup waiting on an account's row lock (Supabase Auth updating it for a new
 #      invite) keeps the account when that new invitation committed while it waited (ADR 0024
-#      section 7: the open-invitation check takes a fresh snapshot).
+#      section 7: the open-invitation check takes a fresh snapshot);
+#   6. an owner withdrawing an invitation while it is being accepted: the delete waits on the
+#      accept's row lock, then re-checks the row, so the accepted invitation stays (ADR 0026:
+#      owners may delete only invitations not yet accepted).
 # Session 1 holds its transaction open for 2 seconds after its call. Session 2 starts only once
 # session 1 is in that sleep (seen in pg_stat_activity), so session 1 already holds its locks, and
 # each check also requires that session 2 was seen waiting on a lock: a slow runner can't turn the
@@ -162,5 +165,22 @@ kept=$(sql "select count(*) from auth.users where id = '$reinvited'")
 check "cleanup waiting on a re-invited account sees the invitation committed meanwhile and keeps the account" \
   "$([ "$waited" = waited ] && [ "$kept" = 1 ] && grep -qx 'deleted=0' "$work/r2" && echo true)" \
   "$waited kept=$kept; session 1: $(tr '\n' ' ' <"$work/r1"); session 2: $(tr '\n' ' ' <"$work/r2")"
+
+# 6. Withdraw against accept. Session 1 is the invited person accepting (it holds the invitation's
+# row lock, from accept_invitation's `for update`, for 2 seconds); session 2 is the owner deleting
+# that invitation, which waits on the lock. After session 1 commits, the delete policy's
+# `accepted_at is null` is re-checked on the accepted row, so nothing is deleted.
+tok=$(printf 'ab%.0s' $(seq 1 32))
+sql "delete from public.invitations where workspace_id = '$ws2';
+     insert into public.invitations (workspace_id, email, token_hash, invited_by)
+       values ('$ws2', 'race-invitee@example.test', extensions.digest(decode('$tok', 'hex'), 'sha256'), '$owner');" >/dev/null
+waited=$(race "$invitee" "select public.accept_invitation('$tok');" \
+  "$owner" "with d as (delete from public.invitations where workspace_id = '$ws2' returning 1) select 'deleted=' || count(*) from d;" \
+  "$work/w1" "$work/w2")
+joined=$(count "^$ws2\$" "$work/w1")
+kept=$(sql "select count(*) from public.invitations where workspace_id = '$ws2' and accepted_at is not null")
+check "withdrawing an invitation while it is accepted waits, then deletes nothing; the accepted row stays" \
+  "$([ "$waited" = waited ] && [ "$joined" = 1 ] && [ "$kept" = 1 ] && grep -qx 'deleted=0' "$work/w2" && echo true)" \
+  "$waited joined=$joined kept=$kept; session 1: $(tr '\n' ' ' <"$work/w1"); session 2: $(tr '\n' ' ' <"$work/w2")"
 
 exit "$fail"

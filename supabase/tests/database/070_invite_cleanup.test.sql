@@ -3,7 +3,7 @@
 -- address is open in any workspace. Migration 20261125030000_invite_cleanup.sql.
 -- Covers: public.invitations
 begin;
-select plan(25);
+select plan(28);
 
 -- A owns X, B owns Y. P* are accounts an invite email made (invited, unconfirmed, never signed in)
 -- unless the comment says otherwise.
@@ -131,6 +131,25 @@ delete from public.invitations where id = '00000000-0000-4000-d000-000000000012'
 select ok(pg_temp.exists_user('00000000-0000-4000-b000-000000000002'),
   'deleting an accepted invitation removes no account (the trigger skips it)');
 select is(private.delete_unused_invited_users('nobody@example.test'), 0, 'an address with no account deletes nothing');
+
+-- 26-28. As the owner, through the delete policy (migration 20261125050000): an accepted invitation
+-- can't be withdrawn, so the record of the join stays; an open one still can.
+delete from public.invitations where workspace_id = '00000000-0000-4000-c000-0000000000f1';
+insert into public.invitations (id, workspace_id, email, token_hash, invited_by, accepted_at) values
+  ('00000000-0000-4000-d000-000000000098', '00000000-0000-4000-c000-0000000000f1', 'p98@example.test',
+   extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', now()),
+  ('00000000-0000-4000-d000-000000000099', '00000000-0000-4000-c000-0000000000f1', 'p99@example.test',
+   extensions.gen_random_bytes(32), '00000000-0000-4000-a000-00000000000a', null);
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
+with d as (delete from public.invitations where id = '00000000-0000-4000-d000-000000000098' returning 1)
+select is(count(*)::int, 0, 'the owner deleting an accepted invitation removes nothing') from d;
+with d as (delete from public.invitations where workspace_id = '00000000-0000-4000-c000-0000000000f1' returning id)
+select is(array_agg(id), array['00000000-0000-4000-d000-000000000099'::uuid],
+  'the owner deleting every invitation of the workspace removes only the open one') from d;
+reset role;
+select ok(exists (select 1 from public.invitations where id = '00000000-0000-4000-d000-000000000098'),
+  'the accepted invitation row stays');
 
 select * from finish();
 rollback;

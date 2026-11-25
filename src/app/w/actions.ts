@@ -209,8 +209,10 @@ async function clearUnconfirmedSignup(supabase: SupabaseClient, invitationId: st
   return data;
 }
 
-// An owner withdraws an invitation (the owners' delete policy). A trigger then deletes the invited
-// account if nobody used it and no other invitation for that address is open (T8, ADR 0024).
+// An owner withdraws an invitation that is not yet accepted (the owners' delete policy allows only
+// those, ADR 0026; the filter here says so too). An accepted one stays as the record of the join.
+// A trigger then deletes the invited account if nobody used it and no other
+// invitation for that address is open (T8, ADR 0024).
 export async function revokeInvitation(_state: FormState, formData: FormData): Promise<FormState> {
   const workspaceId = field(formData, "workspace_id");
   const invitationId = field(formData, "invitation_id");
@@ -223,8 +225,19 @@ export async function revokeInvitation(_state: FormState, formData: FormData): P
     .delete()
     .eq("id", invitationId)
     .eq("workspace_id", workspaceId)
+    .is("accepted_at", null)
     .select("id");
   if (error) return answer(page, { error: dbErrorCode("invite-revoke", error) }, form);
-  if (!data?.length) return answer(page, { error: "not-allowed" }, form);
+  if (!data?.length) {
+    // Accepted since the page loaded (owners can read their workspaces' invitations): say so,
+    // rather than the general refusal a foreign or missing invitation gets.
+    const { data: row } = await supabase
+      .from("invitations")
+      .select("accepted_at")
+      .eq("id", invitationId)
+      .eq("workspace_id", workspaceId)
+      .maybeSingle<{ accepted_at: string | null }>();
+    return answer(page, { error: row?.accepted_at ? "invite-already-accepted" : "not-allowed" }, form);
+  }
   redirect(`${page}?notice=invite-revoked`);
 }

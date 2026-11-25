@@ -157,6 +157,26 @@ test("someone's earlier sign-up with the address is replaced, so its password ne
   await ctx.close();
 });
 
+test("an invitation accepted after the owner's page loaded can't be withdrawn", async ({ browser, page }) => {
+  const { wid } = await ownerWorkspace(page, "Invite accepted");
+  const ctx = await browser.newContext();
+  const pageB = await ctx.newPage();
+  const b = await signUpAndConfirm(pageB, "acceptfirst");
+  const link = await inviteFromPage(page, b.email, HAS_ACCOUNT);
+  await expect(openInvitations(page)).toHaveCount(1);
+  // B joins while the owner's page still lists the invitation as open.
+  await pageB.goto(link);
+  await pageB.getByRole("button", { name: "Join workspace" }).click();
+  await expect(pageB).toHaveURL(`${SITE}/w/${wid}?notice=joined-workspace`);
+
+  await openInvitations(page).getByRole("button", { name: "Withdraw invitation" }).click();
+  await expect(alertIn(page)).toHaveText("This invitation was already accepted, so it can't be withdrawn.");
+  await page.goto(`/w/${wid}`);
+  await expect(memberItems(page).filter({ hasText: b.email })).toContainText("client");
+  await expect(openInvitations(page)).toHaveCount(0);
+  await ctx.close();
+});
+
 test("withdrawing an invitation deletes the unused account, so the address can sign up", async ({ browser, page }) => {
   await ownerWorkspace(page, "Invite revoke");
   const e = newUser("withdrawn");

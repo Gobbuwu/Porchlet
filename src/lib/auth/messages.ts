@@ -44,6 +44,7 @@ export const MESSAGES = {
     "This address already has an account, so no email was sent. Copy the link below and send it to them.",
   "invite-email-failed": "The invitation was made, but the email could not be sent. Copy the link below and send it yourself.",
   "invite-revoked": "Invitation withdrawn.",
+  "invite-already-accepted": "This invitation was already accepted, so it can't be withdrawn.",
   "invite-pending": "This address already has an open invitation. Withdraw it first to send a new one.",
   "invite-workspace-limit": "This workspace has 20 open invitations. Withdraw some before inviting more.",
   "invite-hourly-limit": "You have sent 20 invitations in the last hour. Try again later.",
