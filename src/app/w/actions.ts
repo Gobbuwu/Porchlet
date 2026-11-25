@@ -181,13 +181,22 @@ export async function inviteClient(_state: FormState, formData: FormData): Promi
   }
   const link = inviteLink(origin, data.token);
   // Before the email: an unconfirmed sign-up with the address is deleted, so the invite makes a
-  // fresh account. After it: one made in between kept its password, so it is deleted too, which
-  // leaves the email's link signing nobody in (ADR 0024 section 7). A failed check sends no email.
-  const before = await clearUnconfirmedSignup(supabase, data.invitation_id);
-  const sent = before === null ? "failed" : await sendInviteEmail(email, link);
-  const checked = sent === "sent" && (await clearUnconfirmedSignup(supabase, data.invitation_id)) !== 0 ? "failed" : sent;
+  // fresh account with no password, which a later sign-up can't add one to (ADR 0024 M12). After it,
+  // whatever the email's outcome: a sign-up made in between kept its password, so it is deleted
+  // too, and the email (whose link that deletion broke) is sent once more. A failed check, or a
+  // second deletion, ends as "email failed" (ADR 0024 section 7).
+  let sent: Awaited<ReturnType<typeof sendInviteEmail>> = "failed";
+  if ((await clearUnconfirmedSignup(supabase, data.invitation_id)) !== null) {
+    sent = await sendInviteEmail(email, link);
+    let after = await clearUnconfirmedSignup(supabase, data.invitation_id);
+    if (after !== 0 && sent === "sent") {
+      sent = await sendInviteEmail(email, link);
+      after = await clearUnconfirmedSignup(supabase, data.invitation_id);
+    }
+    if (after !== 0) sent = "failed";
+  }
   const notice =
-    checked === "sent" ? "invite-sent" : checked === "has-account" ? "invite-has-account" : "invite-email-failed";
+    sent === "sent" ? "invite-sent" : sent === "has-account" ? "invite-has-account" : "invite-email-failed";
   const secure = isHttps(await headers());
   (await cookies()).set(newInviteCookieName(secure), `${workspaceId}.${data.token}`, {
     ...hardenCookie({}, secure),
