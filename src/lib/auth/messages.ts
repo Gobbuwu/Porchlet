@@ -1,4 +1,5 @@
-// Every message the auth forms show, by code. Raw server messages are never shown.
+// Every message the app's forms show (auth, and from M2 the workspace pages), by code. Raw server
+// and database messages are never shown.
 // The codes also travel in the URL after a form posted without JavaScript (ADR 0018), so a
 // page only ever shows one of these fixed texts, never text taken from the URL.
 // Error codes: https://supabase.com/docs/guides/auth/debugging/error-codes
@@ -26,6 +27,17 @@ export const MESSAGES = {
   "signup-disabled": "Sign-up is turned off on this site.",
   "signup-sent": "Check your email for a link to confirm your account.",
   "reset-sent": "If an account uses that email, we sent it a link to choose a new password.",
+  // Workspaces and projects (M2).
+  "not-allowed": "You can't do that in this workspace.",
+  "workspace-name-invalid": "Enter a workspace name of 1 to 80 characters.",
+  "project-name-invalid": "Enter a project name of 1 to 120 characters.",
+  "workspace-created": "Workspace created.",
+  "project-created": "Project created.",
+  "project-renamed": "Project renamed.",
+  "project-archived": "Project archived.",
+  "project-restored": "Project restored.",
+  "member-removed": "Member removed.",
+  "left-workspace": "You left the workspace.",
 } as const;
 
 export type MessageCode = keyof typeof MESSAGES;

@@ -23,5 +23,6 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0021](0021-password-length-and-login-check.md) | Password length checked like Supabase counts it; passwords checked again at every login | Accepted |
 | [0022](0022-atomic-rate-limit-take.md) | The auth limiter checks and counts an attempt in one atomic step | Accepted |
 | [0023](0023-current-password-to-change-it.md) | A password change asks for the current password; a reset link's session must save a new one | Accepted |
+| [0025](0025-workspace-pages-and-forms.md) | Workspace pages: an admin-only "Create workspace", per-form messages, redirect on success, a 200 not-found page for strangers | Accepted |
 
-ADRs 0007-0010 are written when their milestone starts (see the M0 doc).
+ADRs 0007-0010 are written when their milestone starts (see the M0 doc). ADR 0024 (invite delivery) is written by M2 PR 3.
