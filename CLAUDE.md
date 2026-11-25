@@ -26,10 +26,11 @@ scripts/ci/db-race-check.sh                    # parallel invitation calls in tw
 
 # E2E: full stack minus unused services (keeps Auth, REST and Mailpit)
 npx supabase start -x realtime,storage-api,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
-scripts/e2e/write-env.sh         # rewrites .env.local (URL, publishable key, RATE_LIMIT_KEY)
-scripts/e2e/make-admin.sh        # fresh instance admin for the workspace tests (.env.e2e-admin)
+scripts/e2e/write-env.sh         # rewrites .env.local (URL, keys incl. local secret key, RATE_LIMIT_KEY, SITE_URL)
+scripts/e2e/make-admin.sh        # fresh instance admin (.env.e2e-admin); re-run before each E2E run
 scripts/ci/session-limit-check.sh  # session limits against the real Auth server
-npm run build && npx playwright test --project=chromium
+npm run build && npx playwright test --project=chromium --project=chromium-cap  # -cap: invite cap, runs last
+scripts/ci/check-secret-key-use.sh   # secret key only in src/lib/supabase/admin.ts (ADR 0005)
 ```
 
 CI (`.github/workflows/ci.yml`) runs all of these plus Firefox and WebKit E2E, Node 22/24/26 builds,
