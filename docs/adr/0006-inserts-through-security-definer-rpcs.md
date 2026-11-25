@@ -43,7 +43,7 @@ Details decided while building it, each measured or tested:
 
 5. **`token_hash` is not selectable.** `authenticated` gets a column-level select on `invitations` without it; nothing in the app needs it.
 
-6. **The email and confirmation come from `auth.users`, not the JWT.** The function reads the caller's own row, which is current even if the JWT was issued before an email change.
+6. **The email and confirmation come from `auth.users`, not the JWT.** The function reads the caller's own row, which is current even if the JWT was issued before an email change. This trusts Supabase Auth to confirm addresses: a project must keep email confirmation on for sign-ups and email changes (`enable_confirmations`, `double_confirm_changes`), or someone could sign up with an invited address and accept its invitation. M5's wizard sets both.
 
 7. **Errors.** Refusals the app shows use SQLSTATE `P0001` with a fixed message (`invitation_invalid`, `invitation_used`, `invitation_expired`, `invitation_wrong_account`, `email_not_confirmed`, `already_member`, `invitation_pending`, `invalid_email`, `workspace_invitation_limit`, `hourly_invitation_limit`). A caller who isn't entitled gets `42501 not_allowed`, the same for a workspace that doesn't exist, so the answer doesn't confirm one exists.
 
@@ -53,4 +53,4 @@ Details decided while building it, each measured or tested:
 - These functions bypass RLS, so their own checks are the only gate. Each check has a pgTAP test, and each test was shown failing on a planted bad case (M2.md).
 - M4 adds `aal2()` to the owner checks in these functions and to the owner policies (decision D1), with tests using AAL1 and AAL2 claims.
 - PR 3 (invites) calls `create_invitation` before sending the email and deletes the invitation if sending fails; it shows the `P0001` messages as text.
-- An owner's `auth.users` row can't be deleted while a workspace they created exists (`workspaces.created_by` has no cascade; pgTAP test 83 in `040_workspaces`). Deleting a workspace is not in the MVP, so an owner account can't be deleted from the dashboard either. Recorded as a gap in M2.md.
+- An owner's `auth.users` row can't be deleted while a workspace they created exists (`workspaces.created_by` has no cascade; pgTAP test 89 in `040_workspaces`). Deleting a workspace is not in the MVP, so an owner account can't be deleted from the dashboard either. Recorded as a gap in M2.md.

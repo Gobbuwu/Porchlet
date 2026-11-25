@@ -3,7 +3,7 @@
 -- 050_invitations.test.sql.
 -- Covers: public.workspaces, public.workspace_members, public.projects
 begin;
-select plan(84);
+select plan(90);
 
 -- Users: A is the instance admin and owns X; C is a client of X; B owns Y; D is a client of Y;
 -- E belongs to nothing.
@@ -202,7 +202,7 @@ update public.workspaces set name = 'Y' where id = '00000000-0000-4000-c000-0000
 
 set local role authenticated;
 
--- 38-45. Members: co-members see the membership list; nobody can add or change a membership.
+-- 38-48. Members: co-members see the membership list; nobody can add or change a membership.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000c","role":"authenticated"}', true);
 select results_eq($$ select user_id, role from public.workspace_members order by role desc $$,
   $$ values ('00000000-0000-4000-a000-00000000000a'::uuid, 'owner'),
@@ -231,8 +231,25 @@ select is_empty(
 select is_empty(
   $$ delete from public.workspace_members where user_id = '00000000-0000-4000-a000-00000000000d' returning user_id $$,
   'owner A cannot remove D, a client of Y');
+-- A filter or RETURNING also applies the select policy, which would hide a delete policy that let
+-- an owner delete any workspace's rows. With neither, only the delete policy decides.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000b","role":"authenticated"}', true);
+select lives_ok($$ delete from public.workspace_members $$,
+  'owner B can run a delete on memberships with no WHERE clause');
+reset role;
+select results_eq(
+  $$ select user_id from public.workspace_members where workspace_id = (select id from ids where name = 'X') order by user_id $$,
+  $$ values ('00000000-0000-4000-a000-00000000000a'::uuid), ('00000000-0000-4000-a000-00000000000c'::uuid) $$,
+  'owner B''s blanket delete removed none of X''s memberships');
+select results_eq(
+  $$ select user_id from public.workspace_members where workspace_id = '00000000-0000-4000-c000-0000000000f2' $$,
+  $$ values ('00000000-0000-4000-a000-00000000000b'::uuid) $$,
+  'owner B''s blanket delete removed only Y''s client D, not B');
+insert into public.workspace_members (workspace_id, user_id, role)
+  values ('00000000-0000-4000-c000-0000000000f2', '00000000-0000-4000-a000-00000000000d', 'client');
+set local role authenticated;
 
--- 46-49. Profiles: co-members see each other; nobody else does.
+-- 49-52. Profiles: co-members see each other; nobody else does.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000c","role":"authenticated"}', true);
 select results_eq($$ select id, display_name from public.profiles order by id $$,
   $$ values ('00000000-0000-4000-a000-00000000000a'::uuid, 'Alice'),
@@ -250,7 +267,7 @@ select is_empty(
   $$ update public.profiles set display_name = 'hacked' where id = '00000000-0000-4000-a000-00000000000a' returning id $$,
   'a co-member can read but not update another member''s profile');
 
--- 50-63. Projects: the owner writes, members read, nobody crosses workspaces.
+-- 53-69. Projects: the owner writes, members read, nobody crosses workspaces.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
 select lives_ok(
   $$ with p as (
@@ -294,17 +311,26 @@ select is_empty(
 select lives_ok($$ update public.projects set name = 'client blanket' $$,
   'client C can run an update on projects with no WHERE clause');
 select is_empty($$ delete from public.projects returning id $$, 'client C cannot delete any project');
+select lives_ok($$ delete from public.projects $$, 'client C can run a delete on projects with no WHERE clause');
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000e","role":"authenticated"}', true);
 select is_empty($$ select 1 from public.projects $$, 'outsider E sees no project');
+-- Owner B's unfiltered writes may touch only Y's project (see the memberships note above).
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000b","role":"authenticated"}', true);
+select lives_ok($$ update public.projects set name = 'B blanket' $$,
+  'owner B can run an update on projects with no WHERE clause');
+select lives_ok($$ delete from public.projects $$, 'owner B can run a delete on projects with no WHERE clause');
 reset role;
 
--- 64. The client's blanket update changed nothing.
+-- 70. The blanket writes changed nothing of X's.
 select results_eq($$ select name from public.projects order by name $$,
-  $$ values ('X project 2'), ('Y project') $$, 'no project was renamed by the client''s blanket update');
+  $$ values ('X project 2') $$,
+  'the client''s and owner B''s blanket writes left X''s project as it was; B''s delete removed only Y''s');
+insert into public.projects (id, workspace_id, name) values
+  ('00000000-0000-4000-d000-0000000000f2', '00000000-0000-4000-c000-0000000000f2', 'Y project');
 
 set local role authenticated;
 
--- 65-71. list_workspace_members: owners only, with emails.
+-- 71-77. list_workspace_members: owners only, with emails.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
 select results_eq(
   $$ select user_id, role, display_name, email from public.list_workspace_members((select id from ids where name = 'X')) $$,
@@ -327,7 +353,7 @@ select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select * from public.list_workspace_members((select id from ids where name = 'X')) $$,
   '42501', 'not_allowed', 'a JWT with no sub cannot list members');
 
--- 72-77. A removed client loses access at once (T11); the profile view narrows with it.
+-- 78-83. A removed client loses access at once (T11); the profile view narrows with it.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
 select results_eq(
   $$ delete from public.workspace_members where user_id = '00000000-0000-4000-a000-00000000000c' returning user_id $$,
@@ -342,7 +368,7 @@ select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-0000000
 select results_eq($$ select id from public.profiles $$, $$ values ('00000000-0000-4000-a000-00000000000a'::uuid) $$,
   'owner A no longer sees removed client C''s profile');
 
--- 78-81. A client can leave; a blanket delete by a client removes only their own membership.
+-- 84-87. A client can leave; a blanket delete by a client removes only their own membership.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000d","role":"authenticated"}', true);
 select results_eq($$ delete from public.workspace_members returning user_id $$,
   $$ values ('00000000-0000-4000-a000-00000000000d'::uuid) $$,
@@ -355,7 +381,7 @@ select is_empty($$ delete from public.workspace_members returning user_id $$,
   'owner B''s delete with no WHERE removes nobody (owners cannot remove themselves)');
 reset role;
 
--- 82-84. Deleting things cascades as designed.
+-- 88-90. Deleting things cascades as designed.
 select lives_ok($$ delete from auth.users where id = '00000000-0000-4000-a000-00000000000d' $$,
   'a client''s auth user can be deleted');
 select throws_ok($$ delete from auth.users where id = '00000000-0000-4000-a000-00000000000b' $$, '23503', null,

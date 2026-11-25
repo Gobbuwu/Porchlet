@@ -3,7 +3,7 @@
 -- by scripts/ci/db-race-check.sh, which needs two sessions.
 -- Covers: public.invitations, private.invitation_sends
 begin;
-select plan(58);
+select plan(61);
 
 -- A owns X; D is a client of X; B owns Y; C and F are invited later; U has not confirmed their
 -- email; E belongs to nothing.
@@ -111,7 +111,7 @@ select set_config('request.jwt.claims', '{"role":"authenticated"}', true);
 select throws_ok($$ select * from public.create_invitation('00000000-0000-4000-c000-0000000000f1', 'x@example.test') $$,
   '42501', 'not_allowed', 'a JWT with no sub cannot invite');
 
--- 25-33. Who sees and changes invitations.
+-- 25-35. Who sees and changes invitations.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
 select results_eq($$ select email from public.invitations order by email $$,
   $$ values ('c@example.test'), ('unused@example.test') $$, 'owner A sees X''s invitations');
@@ -134,8 +134,13 @@ set local role authenticated;
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000b","role":"authenticated"}', true);
 select is_empty($$ select 1 from public.invitations $$, 'owner B sees none of X''s invitations');
 select is_empty($$ delete from public.invitations returning id $$, 'owner B cannot delete X''s invitations');
+select lives_ok($$ delete from public.invitations $$, 'owner B can run a delete with no WHERE clause');
+reset role;
+select is((select count(*)::int from public.invitations where workspace_id = '00000000-0000-4000-c000-0000000000f1'), 2,
+  'owner B''s blanket delete removed none of X''s invitations');
+set local role authenticated;
 
--- 34-43. accept_invitation refusals.
+-- 36-45. accept_invitation refusals.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000e","role":"authenticated"}', true);
 select throws_ok(format('select public.accept_invitation(%L)', (select token from tokens where name = 'C')),
   'P0001', 'invitation_wrong_account', 'E cannot accept an invitation sent to c@example.test');
@@ -173,7 +178,7 @@ select is_empty($$ select 1 from public.workspaces $$, 'after the refusals F is 
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000e","role":"authenticated"}', true);
 select is_empty($$ select 1 from public.workspaces $$, 'after the refusals E is still in no workspace');
 
--- 44-49. accept_invitation: the right account joins as a client, once.
+-- 46-52. accept_invitation: the right account joins as a client, once.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000c","role":"authenticated"}', true);
 select is_empty($$ select 1 from public.workspaces $$, 'before accepting, C sees no workspace');
 select is(public.accept_invitation((select token from tokens where name = 'C')),
@@ -187,7 +192,21 @@ select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-0000000
 select isnt((select accepted_at from public.invitations where id = (select invitation_id from tokens where name = 'C')),
   null, 'the invitation is marked accepted');
 
--- 50-51. Revoking: the owner deletes a pending invitation and its link stops working.
+-- An address that joined some other way meanwhile gets already_member, not a key violation. The
+-- invitation is inserted directly, so A's hourly count (checked below) is unchanged.
+reset role;
+insert into public.invitations (workspace_id, email, token_hash, invited_by)
+  values ('00000000-0000-4000-c000-0000000000f1', 'e@example.test',
+          extensions.digest(decode(repeat('ee', 32), 'hex'), 'sha256'), '00000000-0000-4000-a000-00000000000a');
+insert into public.workspace_members (workspace_id, user_id, role)
+  values ('00000000-0000-4000-c000-0000000000f1', '00000000-0000-4000-a000-00000000000e', 'client');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000e","role":"authenticated"}', true);
+select throws_ok(format('select public.accept_invitation(%L)', repeat('ee', 32)), 'P0001', 'already_member',
+  'accepting while already a member answers already_member');
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-4000-a000-00000000000a","role":"authenticated"}', true);
+
+-- 53-54. Revoking: the owner deletes a pending invitation and its link stops working.
 select results_eq(
   $$ delete from public.invitations where id = (select invitation_id from tokens where name = 'C2') returning email $$,
   $$ values ('unused@example.test') $$, 'owner A revokes a pending invitation');
@@ -200,7 +219,7 @@ select throws_ok(format('select public.accept_invitation(%L)', (select token fro
   'P0001', 'invitation_invalid', 'a revoked invitation''s link no longer works');
 reset role;
 
--- 52-54. Cap: 20 pending (unaccepted, unexpired) invitations per workspace.
+-- 55-57. Cap: 20 pending (unaccepted, unexpired) invitations per workspace.
 insert into public.invitations (workspace_id, email, token_hash, invited_by)
   select '00000000-0000-4000-c000-0000000000f2', 'p' || g || '@example.test',
          extensions.digest('pending' || g, 'sha256'), '00000000-0000-4000-a000-00000000000b'
@@ -218,7 +237,7 @@ select throws_ok($$ select * from public.create_invitation('00000000-0000-4000-c
   'P0001', 'workspace_invitation_limit', 'the workspace is at 20 pending again');
 reset role;
 
--- 55-58. Cap: 20 invitations per owner per hour, and revoking frees no room.
+-- 58-61. Cap: 20 invitations per owner per hour, and revoking frees no room.
 -- A has made 4 so far (C, C2, U, F); add 15 from the last hour and 30 from before it.
 insert into private.invitation_sends (user_id, created_at)
   select '00000000-0000-4000-a000-00000000000a', now() - interval '10 minutes' from generate_series(1, 15);

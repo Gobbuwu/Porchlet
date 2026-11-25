@@ -51,8 +51,10 @@ wait_for() {
 # "waited" when session 2 was seen waiting on a lock while session 1 held its transaction.
 race() { # $1 user, $2 SQL for session 1, $3 user, $4 SQL for session 2, $5 $6 output files
   as_user "$1" "$2" 2 porchlet-race-s1 >"$5" &
+  # race runs inside $(...), so a failure goes to stderr (stdout is captured) and stops session 1;
+  # the non-zero status then ends the script through set -e.
   wait_for porchlet-race-s1 "state = 'active' and query like '%pg_sleep(2)%'" \
-    || { echo "FAIL session 1 never reached its sleep"; exit 1; }
+    || { echo "FAIL session 1 never reached its sleep" >&2; kill %1 2>/dev/null; wait; exit 1; }
   as_user "$3" "$4" 0 porchlet-race-s2 >"$6" &
   if wait_for porchlet-race-s2 "wait_event_type = 'Lock'"; then echo waited; else echo "did-not-wait"; fi
   wait
