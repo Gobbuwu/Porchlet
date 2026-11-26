@@ -31,6 +31,25 @@ test("five wrong passwords block that account from that IP only", async ({ page,
   await other.close();
 });
 
+test("the limit follows the address the host added, not entries the browser sent", async ({ page }) => {
+  // Netlify, and reverse proxies like nginx's $proxy_add_x_forwarded_for, keep the browser's
+  // X-Forwarded-For entries and append the address they saw (ADR 0028). Changing the earlier
+  // entries on every try must not give a fresh bucket.
+  const user = await signUpAndConfirm(page, "limit-chain");
+  await page.context().clearCookies();
+  const seen = randomIp();
+  for (let i = 0; i < 5; i++) {
+    await page.setExtraHTTPHeaders({ "x-forwarded-for": `${randomIp()}, ${seen}` });
+    await page.goto("/login");
+    await fillLogin(page, user.email, "not-the-password");
+    await expect(alertIn(page)).toHaveText(WRONG);
+  }
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": `${randomIp()}, ${randomIp()}, ${seen}` });
+  await page.goto("/login");
+  await fillLogin(page, user.email, user.password);
+  await expect(alertIn(page)).toHaveText(TOO_MANY);
+});
+
 test("twenty failed logins block that IP, and other visitors are unaffected", async ({ page, browser }) => {
   test.slow();
   for (let i = 0; i < 20; i++) {

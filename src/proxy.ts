@@ -29,7 +29,7 @@ const under = (path: string, prefixes: string[]) =>
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  const https = isHttps(request.headers) || request.nextUrl.protocol === "https:"; // TEMPORARY candidate
+  const https = isHttps(request.headers, request.nextUrl);
   const nonce = newNonce();
   const csp = contentSecurityPolicy(nonce, { dev: process.env.NODE_ENV === "development", https });
 

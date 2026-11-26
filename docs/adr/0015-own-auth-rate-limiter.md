@@ -1,6 +1,6 @@
 # 0015. Porchlet counts auth attempts per visitor IP in Postgres
 
-- Status: Accepted (PR 10 merged 2026-11-24 as f1cd5b5). How an attempt is counted was changed by [ADR 0022](0022-atomic-rate-limit-take.md)
+- Status: Accepted (PR 10 merged 2026-11-24 as f1cd5b5). How an attempt is counted was changed by [ADR 0022](0022-atomic-rate-limit-take.md); which `X-Forwarded-For` entry is the visitor by [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md)
 
 ## Context
 
@@ -57,5 +57,5 @@ Option 4.
 - The setup wizard (M5) generates `RATE_LIMIT_KEY`, stores its hash with the Management API, and sets the env var. Locally, `scripts/e2e/write-env.sh` does both.
 - Four extra database round trips per failed login, and one per other auth action.
 - The limits work in local E2E and CI, so SiegeKit's throttle checks (`login-throttle`, `login-spray`, `signup-limit`, `reset-limit`) have something to find locally.
-- Gap: on a host that passes `X-Forwarded-For` through unchanged, a client can choose its own bucket. Only Supabase's backstop applies there. Self-host docs must say so.
+- Gap: on a host that passes `X-Forwarded-For` through unchanged, a client can choose its own bucket. Only Supabase's backstop applies there. Self-host docs must say so. Since [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md) the last entry is used, which covers hosts that append (Netlify, nginx); a bare `next start` with nothing in front is still such a host.
 - Gap: a large botnet can still use up Supabase's shared backstop. Turnstile after N failures is the follow-up if that happens.

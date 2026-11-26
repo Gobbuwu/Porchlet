@@ -31,12 +31,16 @@ function emailKey(email: string): string {
   return createHash("sha256").update(email.trim().toLowerCase()).digest("hex").slice(0, 32);
 }
 
-// The visitor's IP. Vercel replaces any X-Forwarded-For the browser sent with the address it saw
-// ("we currently overwrite the X-Forwarded-For header", vercel.com/docs/edge-network/headers/
-// request-headers), so the first entry can be trusted there. On a host that passes the header
-// through, a client can pick its own bucket (ADR 0015, gaps); Supabase's limit still applies.
+// The visitor's IP: the last X-Forwarded-For entry, the one the host in front of the app added
+// (ADR 0028). Earlier entries are whatever the browser sent. Vercel replaces the header with the
+// one address it saw ("we currently overwrite the X-Forwarded-For header", vercel.com/docs/
+// edge-network/headers/request-headers); Netlify keeps the browser's entries and appends the
+// address it saw (measured, ADR 0028); a reverse proxy using nginx's $proxy_add_x_forwarded_for
+// appends too. With no host in front (a bare `next start`), every entry is the browser's, so a
+// client can pick its own bucket there (ADR 0015, gaps); Supabase's limit still applies.
 export function clientIp(headers: Headers): string {
-  return headers.get("x-forwarded-for")?.split(",")[0]?.trim().slice(0, 64) || "unknown";
+  const entries = headers.get("x-forwarded-for")?.split(",") ?? [];
+  return entries[entries.length - 1]?.trim().slice(0, 64) || "unknown";
 }
 
 // "ok" carries the ids of the hits taken, so a login can give them back (releaseLimits).
