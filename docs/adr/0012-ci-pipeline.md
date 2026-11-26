@@ -1,6 +1,6 @@
 # 0012. CI pipeline: jobs, tools and lockdown
 
-- Status: Proposed (PR 2, 2026-11-23); accepted when Gobbu merges PR 2
+- Status: Accepted (PR 2 merged 2026-11-23 as 376cd91)
 
 ## Context
 

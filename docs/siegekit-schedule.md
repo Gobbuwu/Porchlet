@@ -6,7 +6,13 @@ Written 2026-11-23 against SiegeKit `main` 4e6f35e (pre-release, no tags) and Po
 
 ## Next runs: R2, and the rest of R1p
 
-R0, R1h, R1 and R1p (partly) are done. R2 comes with M2; R2b is unblocked, since SiegeKit PR 73 merged. Rerun R1p's `ffuf`, Nuclei and ZAP on a deployment Vercel doesn't block. Rerun R1's `signup-limit` and `reset-limit` once SiegeKit can post Server Action forms (SiegeKit #81).
+R0, R1h, R1 and R1p (partly) are done. R2 comes with M2; R2b is unblocked, since SiegeKit PR 73 merged. State of the SiegeKit issues behind the reruns (read on GitHub 2026-11-25 23:55 UTC):
+
+- [#81](https://github.com/Gobbuwu/SiegeKit/issues/81) (sign-up and reset forms that are Server Actions): fixed by SiegeKit #89, merged as 8552161 (new `--signup-page` and `--reset-page` flags). Retest R1's `signup-limit` and `reset-limit` with those flags; not yet done.
+- [#87](https://github.com/Gobbuwu/SiegeKit/issues/87) (scanning behind Vercel Authentication): fixed by SiegeKit #90, merged as 703389e (`SIEGEKIT_EXTRA_HEADERS`). Its branch build 7c9652b passed a rerun on Porchlet's protected preview on 2026-11-25; the merged commit itself has not been run here.
+- [#86](https://github.com/Gobbuwu/SiegeKit/issues/86) (findings read from a host's block page): fix in SiegeKit PR 92, **still open**. Its build 55f1fe5 was run on Porchlet's protected preview on 2026-11-25 (Gobbu's laptop, WSL Ubuntu 24.04, Docker rootful, amd64): two runs of about 10.7k requests each met no block and had no false stop (exit 0); with Vercel's Attack Challenge Mode switched on for the run, Nuclei was stopped as `host-blocked` after 1,980 requests with 0 findings from the challenge page (exit 4). Vercel's Security Checkpoint starting on its own was not met, so that case is unverified, and PR 92 has had commits after 55f1fe5 that were not run here. Results: project files `porchlet-sk87/pr92-results.md` and `pr92-attack-mode-results.md`. The two runs' real findings (all info) are triaged in full project check 1.
+
+Rerun R1p's `ffuf`, Nuclei and ZAP once #86 is fixed on SiegeKit `main`.
 
 ## How "local" and "hosted" work for SiegeKit
 

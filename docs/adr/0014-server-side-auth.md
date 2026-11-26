@@ -1,6 +1,6 @@
 # 0014. Auth runs on the server, with HttpOnly session cookies and a nonce CSP
 
-- Status: Proposed (2026-11-23); accepted when Gobbu merges the PR that adds it
+- Status: Accepted (PR 10 merged 2026-11-24 as f1cd5b5)
 
 ## Context
 
