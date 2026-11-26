@@ -14,7 +14,9 @@ import { signUpAndConfirm, newUser, isAuthCookie } from "../../e2e/support/users
 import { createProject, createWorkspace, logInAsAdmin, projectItem, uniqueName } from "../../e2e/support/workspaces";
 import { HAS_ACCOUNT, EMAILED, inviteFromPage, openInvitations, memberItems } from "../../e2e/support/invites";
 
-const OUT = process.env.R2_OUT ?? "/tmp/r2";
+// No default: a fixed path in the shared temp directory could be made in advance by another local
+// user (CodeQL js/insecure-temporary-file). r2-run.sh passes a directory only its user can read.
+const OUT = process.env.R2_OUT ?? "";
 const SITE = "http://127.0.0.1:3000";
 
 async function cookieHeader(context: BrowserContext) {
@@ -37,7 +39,8 @@ async function submit(page: Page, scope: ReturnType<Page["locator"]> | Page, but
 
 test("record R2 HAR as A", async ({ browser, page: bPage, context: bContext }) => {
   test.setTimeout(180_000);
-  mkdirSync(OUT, { recursive: true });
+  if (!OUT) throw new Error("set R2_OUT to an output directory (scripts/siegekit/r2-run.sh does)");
+  mkdirSync(OUT, { recursive: true, mode: 0o700 });
 
   // B and C sign up through the UI (not recorded).
   const b = await signUpAndConfirm(bPage, "r2-b");
