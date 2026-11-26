@@ -46,7 +46,7 @@ Option 4.
 - Only failed logins count, so people behind one office IP can still log in.
 - No limit is per account alone, so an attacker can't lock a victim out of their account.
 
-**The visitor IP** is the first `X-Forwarded-For` entry (since [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md): the last entry). Vercel overwrites that header: "we currently overwrite the X-Forwarded-For header and do not forward external IPs" ([Vercel docs](https://vercel.com/docs/edge-network/headers/request-headers)).
+**The visitor IP** is the first `X-Forwarded-For` entry (since [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md): the entry the first trusted host added, counted from the end). Vercel overwrites that header: "we currently overwrite the X-Forwarded-For header and do not forward external IPs" ([Vercel docs](https://vercel.com/docs/edge-network/headers/request-headers)).
 
 **Supabase's own limits stay on as a backstop** for attacks spread over many IPs. The M5 setup wizard raises them so normal traffic doesn't reach them; until then they stay at Supabase's defaults.
 
@@ -57,5 +57,5 @@ Option 4.
 - The setup wizard (M5) generates `RATE_LIMIT_KEY`, stores its hash with the Management API, and sets the env var. Locally, `scripts/e2e/write-env.sh` does both.
 - Four extra database round trips per failed login, and one per other auth action.
 - The limits work in local E2E and CI, so SiegeKit's throttle checks (`login-throttle`, `login-spray`, `signup-limit`, `reset-limit`) have something to find locally.
-- Gap: on a host that passes `X-Forwarded-For` through unchanged, a client can choose its own bucket. Only Supabase's backstop applies there. Self-host docs must say so. Since [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md) the last entry is used, which covers hosts that append (Netlify, nginx); a bare `next start` with nothing in front is still such a host.
+- Gap: on a host that passes `X-Forwarded-For` through unchanged, a client can choose its own bucket. Only Supabase's backstop applies there. Self-host docs must say so. Since [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md) the entry is counted from the end (1 host by default, 2 on Netlify, `TRUSTED_PROXY_HOPS` otherwise), which covers hosts that append; a bare `next start` with nothing in front is still such a host.
 - Gap: a large botnet can still use up Supabase's shared backstop. Turnstile after N failures is the follow-up if that happens.

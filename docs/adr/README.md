@@ -27,6 +27,6 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0025](0025-workspace-pages-and-forms.md) | Workspace pages: an admin-only "Create workspace", per-form messages, redirect on success, a 200 not-found page for strangers | Accepted |
 | [0026](0026-withdraw-only-unaccepted-invitations.md) | Owners can withdraw only invitations not yet accepted | Accepted |
 | [0027](0027-password-chosen-after-confirmation.md) | Sign-up asks only for the email; the password is chosen after the address is confirmed | Accepted |
-| [0028](0028-visitor-ip-and-https-behind-netlify.md) | The visitor IP is the last X-Forwarded-For entry, and the proxy also reads HTTPS from its URL | Accepted |
+| [0028](0028-visitor-ip-and-https-behind-netlify.md) | The visitor IP counts the hosts in front of the app, and the proxy also reads HTTPS from its URL | Accepted |
 
 ADRs 0007-0010 are written when their milestone starts (see the M0 doc).
