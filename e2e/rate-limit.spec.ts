@@ -31,20 +31,26 @@ test("five wrong passwords block that account from that IP only", async ({ page,
   await other.close();
 });
 
-test("the limit follows the address the host added, not entries the browser sent", async ({ page }) => {
+// Hosts in front of the app that append to X-Forwarded-For, as the server counts them (clientIp):
+// 1 by default, 2 on Netlify (SITE_ID), or TRUSTED_PROXY_HOPS. CI runs with 1; set SITE_ID or
+// TRUSTED_PROXY_HOPS in the shell that starts the test run to check another count.
+const HOPS = Number(process.env.TRUSTED_PROXY_HOPS) || (process.env.SITE_ID ? 2 : 1);
+
+test("the limit follows the address the first trusted host added, not entries the browser sent", async ({ page }) => {
   // Netlify, and reverse proxies like nginx's $proxy_add_x_forwarded_for, keep the browser's
-  // X-Forwarded-For entries and append the address they saw (ADR 0028). Changing the earlier
-  // entries on every try must not give a fresh bucket.
+  // X-Forwarded-For entries and append the address they saw; hosts behind them append their own
+  // (ADR 0028). Changing every other entry on each try must not give a fresh bucket.
   const user = await signUpAndConfirm(page, "limit-chain");
   await page.context().clearCookies();
   const seen = randomIp();
+  const chain = () => [randomIp(), seen, ...Array.from({ length: HOPS - 1 }, randomIp)].join(", ");
   for (let i = 0; i < 5; i++) {
-    await page.setExtraHTTPHeaders({ "x-forwarded-for": `${randomIp()}, ${seen}` });
+    await page.setExtraHTTPHeaders({ "x-forwarded-for": chain() });
     await page.goto("/login");
     await fillLogin(page, user.email, "not-the-password");
     await expect(alertIn(page)).toHaveText(WRONG);
   }
-  await page.setExtraHTTPHeaders({ "x-forwarded-for": `${randomIp()}, ${randomIp()}, ${seen}` });
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": `${randomIp()}, ${chain()}` });
   await page.goto("/login");
   await fillLogin(page, user.email, user.password);
   await expect(alertIn(page)).toHaveText(TOO_MANY);

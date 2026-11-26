@@ -15,8 +15,7 @@ export const RULES = {
   // when the password proves right (ADR 0022), so parallel guesses can't all pass one check. Per
   // IP+email stops guessing one account's password; per IP stops spraying many accounts. Nothing
   // locks an account for everyone, so an attacker can't lock a victim out (as long as the visitor
-  // IP is right: behind two hosts that both append to X-Forwarded-For every visitor shares one IP
-  // until the trusted-proxy setting planned for M5, ADR 0028).
+  // IP is right, see clientIp: with too few trusted hops, visitors share one IP).
   loginFailures: (email: string): Rule[] => [
     { scope: `login-fail:${emailKey(email)}`, limit: 5, windowSeconds: TEN_MINUTES },
     { scope: "login-fail", limit: 20, windowSeconds: TEN_MINUTES },
@@ -33,16 +32,36 @@ function emailKey(email: string): string {
   return createHash("sha256").update(email.trim().toLowerCase()).digest("hex").slice(0, 32);
 }
 
-// The visitor's IP: the last X-Forwarded-For entry, the one the host in front of the app added
-// (ADR 0028). Earlier entries are whatever the browser sent. Vercel replaces the header with the
-// one address it saw ("we currently overwrite the X-Forwarded-For header", vercel.com/docs/
-// edge-network/headers/request-headers); Netlify keeps the browser's entries and appends the
-// address it saw (measured, ADR 0028); a reverse proxy using nginx's $proxy_add_x_forwarded_for
-// appends too. With no host in front (a bare `next start`), every entry is the browser's, so a
-// client can pick its own bucket there (ADR 0015, gaps); Supabase's limit still applies.
+// How many hosts in front of the app append their own entry to X-Forwarded-For (ADR 0028). Vercel
+// replaces the header with the one address it saw ("we currently overwrite the X-Forwarded-For
+// header", vercel.com/docs/edge-network/headers/request-headers): 1. Netlify's CDN appends the
+// visitor's address, then the edge function that runs src/proxy.ts appends its own before calling
+// the app (measured, ADR 0028): 2. Netlify sets SITE_ID for its functions at runtime ("only the
+// following variables are available to serverless functions during runtime: URL, SITE_NAME,
+// SITE_ID", docs.netlify.com/build/functions/environment-variables). TRUSTED_PROXY_HOPS overrides
+// both, for example behind your own reverse proxy chain (.env.example).
+function trustedHops(): number {
+  const setting = process.env.TRUSTED_PROXY_HOPS;
+  if (setting) {
+    const hops = Number(setting);
+    if (Number.isInteger(hops) && hops >= 1 && hops <= 10) return hops;
+    console.error("TRUSTED_PROXY_HOPS must be a whole number from 1 to 10; using the host default");
+  }
+  return process.env.SITE_ID ? 2 : 1;
+}
+
+// The visitor's IP: the X-Forwarded-For entry the first trusted host added, counted from the end.
+// Entries before it are whatever the browser sent. With fewer entries than hops, the first one is
+// the closest to the visitor that exists. With no host in front (a bare `next start`), every entry
+// is the browser's, so a client can pick its own bucket there (ADR 0015, gaps); Supabase's limit
+// still applies.
 export function clientIp(headers: Headers): string {
-  const entries = headers.get("x-forwarded-for")?.split(",") ?? [];
-  return entries[entries.length - 1]?.trim().slice(0, 64) || "unknown";
+  const entries = (headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
+  const entry = entries[Math.max(0, entries.length - trustedHops())];
+  return entry?.slice(0, 64) || "unknown";
 }
 
 // "ok" carries the ids of the hits taken, so a login can give them back (releaseLimits).
