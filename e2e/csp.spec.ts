@@ -40,22 +40,25 @@ test("every page gets a strict CSP with a fresh nonce on all its scripts", async
   }
 });
 
-test("the proxy skips only the exact asset paths, and runs for every Server Action", async ({ request }) => {
-  const proxied = async (path: string, action: boolean) => {
-    const response = action
-      ? await request.post(path, { headers: { "next-action": "0".repeat(42) }, data: "[]" })
-      : await request.get(path);
-    return /'nonce-/.test(response.headers()["content-security-policy"] ?? "");
-  };
+test("the proxy skips only the exact asset paths, and refuses posts outside the form pages", async ({ request }) => {
+  const proxied = async (path: string) =>
+    /'nonce-/.test((await request.get(path)).headers()["content-security-policy"] ?? "");
   // Look-alikes of the skipped paths are pages like any other.
   for (const path of ["/favicon.icox", "/favicon.ico.txt", "/_next/staticfoo", "/_next/imagefoo"]) {
-    expect(await proxied(path, false), `GET ${path}`).toBe(true);
+    expect(await proxied(path), `GET ${path}`).toBe(true);
   }
-  for (const path of ["/favicon.ico", "/_next/image"]) expect(await proxied(path, false), `GET ${path}`).toBe(false);
-  // A Server Action posted to a skipped path still passes through the proxy, so it reaches the app
-  // through the same hosts as on any page (ADR 0029: the visitor IP is counted from that hop).
-  for (const path of ["/favicon.ico", "/_next/image", "/_next/static/x", "/favicon.icox", "/login"]) {
-    expect(await proxied(path, true), `action POST ${path}`).toBe(true);
+  for (const path of ["/favicon.ico", "/_next/image"]) expect(await proxied(path), `GET ${path}`).toBe(false);
+
+  // A Server Action, or a form post without JavaScript, is accepted only on the pages with forms,
+  // where the hosts in front of the app were measured (ADR 0029, decision 3). The skipped paths too:
+  // a second matcher runs the proxy for every request with a Next-Action header.
+  const action = { headers: { "next-action": "0".repeat(42) }, data: "[]" };
+  for (const path of ["/", "/no-such-page", "/api/health", "/favicon.icox", "/favicon.ico", "/_next/image", "/_next/static/x"]) {
+    expect((await request.post(path, action)).status(), `action POST ${path}`).toBe(405);
+  }
+  expect((await request.post("/", { multipart: { $ACTION_ID_0: "" } })).status(), "form POST /").toBe(405);
+  for (const path of ["/login", "/w/x"]) {
+    expect((await request.post(path, action)).status(), `action POST ${path}`).not.toBe(405);
   }
 });
 
