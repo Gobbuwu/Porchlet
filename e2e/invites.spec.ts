@@ -6,6 +6,7 @@ import {
   inviteFromPage,
   memberItems,
   openInvitations,
+  shownInviteLink,
   SITE,
 } from "./support/invites";
 import { mailCount } from "./support/mail";
@@ -239,6 +240,27 @@ test("a pending invite, then the person's own sign-up: the email still gets them
   await expect(alertIn(pageF)).toHaveText(/^The sign-in part of this email's link has expired or was already used;/);
   await pageF.getByRole("button", { name: "Join workspace" }).click();
   await expect(pageF.getByRole("heading", { level: 1 })).toHaveText(name);
+  await ctx.close();
+});
+
+// T9: the links come from SITE_URL, never from the request's headers. The owner reaches the app
+// as localhost:3000 while SITE_URL is 127.0.0.1:3000, so a link built from the Host or
+// X-Forwarded-Host header would start with http://localhost:3000 and fail the link checks. Each
+// such planted case fails this test (M2.md section 13).
+test("invite links stay on the site's URL when the app is reached by another host name", async ({ browser }) => {
+  const other = "http://localhost:3000";
+  expect(new URL(other).host).not.toBe(new URL(SITE).host);
+  const ctx = await browser.newContext({ baseURL: other });
+  const page = await ctx.newPage();
+  await ownerWorkspace(page, "Invite other host");
+  const client = newUser("otherhost");
+  const link = await inviteFromPage(page, client.email, EMAILED);
+  expect(new URL(page.url()).origin).toBe(other);
+  // The render that follows the action sees Next.js's own host name in Host (measured); a fresh
+  // load sees the browser's, so the page's link is checked again.
+  await page.reload();
+  expect(await shownInviteLink(page)).toBe(link);
+  expect(new URL(await inviteEmailLink(client.email)).searchParams.get("invite")).toBe(link);
   await ctx.close();
 });
 
