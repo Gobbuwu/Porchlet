@@ -12,6 +12,11 @@ export async function inviteFromPage(page: Page, email: string, notice: RegExp):
   await page.getByLabel("Client's email").fill(email);
   await page.getByRole("button", { name: "Send invitation" }).click();
   await expect(page.getByRole("status")).toHaveText(notice);
+  return shownInviteLink(page);
+}
+
+/** The new invite's link on the owner's page, checked to be on the site's own host (T9). */
+export async function shownInviteLink(page: Page): Promise<string> {
   const link = await page.getByLabel("Invite link").inputValue();
   const prefix = `${SITE}/invite?token=`;
   expect(link.startsWith(prefix), link).toBe(true);
@@ -25,8 +30,11 @@ export const HAS_ACCOUNT = /^This address already has an account/;
 /** The /auth/confirm link in the newest invite email to `email`. */
 export async function inviteEmailLink(email: string, after = 0): Promise<string> {
   const link = await confirmLink(email, INVITE_SUBJECT, after);
-  // The email's link is on the site's own host (Supabase Auth's site_url), threat T9.
+  // The email's link is on the site's own host (Supabase Auth's site_url), threat T9, and so is the
+  // invite link it carries, which the app built (the redirectTo Supabase Auth checked).
   expect(link.startsWith(`${SITE}/auth/confirm?`), link).toBe(true);
+  const invite = new URL(link).searchParams.get("invite") ?? "";
+  expect(invite.startsWith(`${SITE}/invite?token=`), invite).toBe(true);
   return link;
 }
 
