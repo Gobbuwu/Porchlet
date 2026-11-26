@@ -27,6 +27,24 @@ async function takeAttempt(
   supabase: Awaited<ReturnType<typeof createClient>>,
   rules: readonly Rule[],
 ): Promise<{ error: MessageCode } | { hits: number[] }> {
+  // TEMPORARY host measurement (removed before review): one counter per candidate source.
+  {
+    const h = await headers();
+    const xff = (h.get("x-forwarded-for") ?? "").split(",").map((v) => v.trim()).filter(Boolean);
+    const tag = (v: string | null) => (v ?? "none").replace(/[^a-z0-9.:-]/gi, "_").slice(0, 20);
+    const meta = `n${xff.length}-xfp-${tag(h.get("x-forwarded-proto"))}-site-${!!process.env.SITE_ID}`;
+    const candidates: [string, string][] = [
+      ["xff-first", xff[0] ?? ""],
+      ["xff-last", xff[xff.length - 1] ?? ""],
+      ["xff-second", xff[1] ?? ""],
+      ["nf-ip", h.get("x-nf-client-connection-ip") ?? ""],
+      ["real-ip", h.get("x-real-ip") ?? ""],
+      ["client-ip", h.get("client-ip") ?? ""],
+    ];
+    for (const [name, ip] of candidates) {
+      await takeLimits(supabase, ip, [{ scope: `m-${name}-${meta}`, limit: 1000, windowSeconds: 600 }]);
+    }
+  }
   const result = await takeLimits(supabase, clientIp(await headers()), rules);
   if (result.status === "limited") return { error: TOO_MANY_ATTEMPTS };
   if (result.status === "unavailable") return { error: GENERIC_ERROR };
