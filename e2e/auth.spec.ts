@@ -297,6 +297,46 @@ test("over HTTPS the session cookie is __Host- prefixed, Secure and HttpOnly", a
   }
 });
 
+test("with X-Forwarded-Proto `http, https` the proxy and the login agree on the session cookie", async ({
+  page,
+  request,
+}) => {
+  // Next.js gives the proxy an https:// URL when the header contains "https" anywhere (ADR 0028), so
+  // the Server Action must read the header the same way, or the proxy looks for a cookie the login
+  // never set and sends the signed-in person back to /login (the Netlify bug, from the other side).
+  const proto = "http, https";
+  const user = await signUpAndConfirm(page, "https-chain");
+  await page.context().clearCookies();
+  await page.goto("/login");
+  await waitForHydration(page);
+  const post = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/login");
+  await fillLogin(page, user.email, user.password);
+  const real = await post;
+  const headers = await real.allHeaders();
+  const res = await request.post(real.url(), {
+    headers: {
+      "content-type": headers["content-type"],
+      "next-action": headers["next-action"],
+      accept: headers["accept"] ?? "text/x-component",
+      origin: new URL(real.url()).origin,
+      "x-forwarded-proto": proto,
+    },
+    data: real.postDataBuffer() ?? undefined,
+    maxRedirects: 0,
+  });
+  const session = res
+    .headersArray()
+    .filter((h) => h.name.toLowerCase() === "set-cookie" && /^__Host-porchlet-auth(\.\d+)?=/.test(h.value))
+    .map((h) => h.value.split(";")[0]);
+  expect(session.length, "the login set __Host- session cookies").toBeGreaterThan(0);
+
+  const w = await request.get("/w", {
+    headers: { cookie: session.join("; "), "x-forwarded-proto": proto },
+    maxRedirects: 0,
+  });
+  expect(w.status(), `/w answered ${w.status()} ${w.headers()["location"] ?? ""}`).toBe(200);
+});
+
 test("Supabase Auth's 429 shows the friendly rate-limit message", async ({ page, context }) => {
   // supabase/config.toml sets max_frequency = "60s": a second reset email to the same user
   // within 60 s gets HTTP 429 over_email_send_rate_limit from Supabase Auth.

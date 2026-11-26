@@ -14,19 +14,20 @@ Netlify's documented runtime variables for functions are only `URL`, `SITE_NAME`
 ## Decision
 
 1. **The visitor IP is the last `X-Forwarded-For` entry** (`clientIp`, `src/lib/auth/rate-limit.ts`): the entry the host in front of the app added. On Vercel the header holds one entry (Vercel overwrites it), so nothing changes there. On Netlify it is the address Netlify saw. A reverse proxy that appends (nginx's `$proxy_add_x_forwarded_for`) gives the same.
-2. **The proxy treats a request as HTTPS when `X-Forwarded-Proto` says so or its URL is `https://`** (`isHttps(headers, url)`, `src/lib/http.ts`). Server Actions and pages keep reading the header, which they get on both hosts, so the proxy and the actions agree on the cookie names.
+2. **The proxy treats a request as HTTPS when `X-Forwarded-Proto` says so or its URL is `https://`** (`isHttps(headers, url)`, `src/lib/http.ts`). Server Actions and pages keep reading the header, which they get on both hosts. The header test is now Next.js's own (the value contains `https`, `next-server.js` `attachRequestMeta`), because under `next start` that test decides the scheme of the proxy's URL: with the old "first entry is `https`" test, a header such as `http, https` would have split the proxy and the actions again.
 
 Options for the IP (measured on Netlify as above; Vercel by its documented overwrite and the M1 measurement in ADR 0015):
 
 | Option | Coverage and cost |
 |---|---|
-| **Last `X-Forwarded-For` entry (chosen)** | Right on Vercel, Netlify and an appending reverse proxy, with no setting. Two hosts in a row that both append (for example a CDN in front of Netlify) would put the inner host's address last: every visitor shares one bucket, the safe direction (a shared limit, never a chosen one) |
+| **Last `X-Forwarded-For` entry (chosen)** | Right on Vercel, Netlify and an appending reverse proxy, with no setting. Two hosts in a row that both append (for example a CDN in front of Netlify, unverified) would put the inner host's address last: every visitor shares one bucket, so one person's failures could use up the limit for everyone (a lockout, instead of the bypass the first entry gives there) |
 | `x-nf-client-connection-ip` when on Netlify | Right on Netlify, but the app can't detect Netlify at runtime, so it needs a new setting each Netlify self-hoster must get right; a header any browser can send elsewhere |
-| A setting naming the trusted header | Most flexible; one more setting to document and get wrong, for no host measured to need it |
+| A trusted-proxy setting (how many appending hosts to skip) | Needed for chains of two or more hosts; one more setting to document and test. Not needed by either measured host, so it stays where M1.md planned it (M5, before v0.1.0) |
 
 ## Consequences
 
 - With no host in front (a bare `next start`), every entry is the browser's, as before (ADR 0015, gaps).
 - E2E "the limit follows the address the host added, not entries the browser sent" sends a changing first entry with a fixed last one and expects the per-account limit to hold.
-- The HTTPS half can't be reproduced on the local stack (plain HTTP); it was checked on a Netlify branch deploy (M2.md section 15).
+- E2E "with X-Forwarded-Proto `http, https` the proxy and the login agree on the session cookie" covers the `next start` side. The Netlify side (an `https://` URL with no header) can't be reproduced on the local stack; it was checked on a Netlify branch deploy (M2.md section 15).
+- Until the M5 trusted-proxy setting, a deployment behind two appending hosts shares one rate-limit IP across visitors (see the options table).
 - Still different on Netlify, not changed here (M2.md section 15, gaps): Netlify sends its own HSTS value (one year, `includeSubDomains; preload`) instead of ours; `/_next/static` files get none of the `next.config.ts` headers; Netlify adds a script to each page, which the CSP blocks.

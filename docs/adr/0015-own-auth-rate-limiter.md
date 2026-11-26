@@ -46,7 +46,7 @@ Option 4.
 - Only failed logins count, so people behind one office IP can still log in.
 - No limit is per account alone, so an attacker can't lock a victim out of their account.
 
-**The visitor IP** is the first `X-Forwarded-For` entry. Vercel overwrites that header: "we currently overwrite the X-Forwarded-For header and do not forward external IPs" ([Vercel docs](https://vercel.com/docs/edge-network/headers/request-headers)).
+**The visitor IP** is the first `X-Forwarded-For` entry (since [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md): the last entry). Vercel overwrites that header: "we currently overwrite the X-Forwarded-For header and do not forward external IPs" ([Vercel docs](https://vercel.com/docs/edge-network/headers/request-headers)).
 
 **Supabase's own limits stay on as a backstop** for attacks spread over many IPs. The M5 setup wizard raises them so normal traffic doesn't reach them; until then they stay at Supabase's defaults.
 

@@ -14,7 +14,9 @@ export const RULES = {
   // Failed logins. Each attempt takes a slot before the password is checked and gives it back
   // when the password proves right (ADR 0022), so parallel guesses can't all pass one check. Per
   // IP+email stops guessing one account's password; per IP stops spraying many accounts. Nothing
-  // locks an account for everyone, so an attacker can't lock a victim out.
+  // locks an account for everyone, so an attacker can't lock a victim out (as long as the visitor
+  // IP is right: behind two hosts that both append to X-Forwarded-For every visitor shares one IP
+  // until the trusted-proxy setting planned for M5, ADR 0028).
   loginFailures: (email: string): Rule[] => [
     { scope: `login-fail:${emailKey(email)}`, limit: 5, windowSeconds: TEN_MINUTES },
     { scope: "login-fail", limit: 20, windowSeconds: TEN_MINUTES },
