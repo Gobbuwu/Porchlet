@@ -18,7 +18,7 @@ npm run build
 scripts/ci/check-client-bundle.sh .next/static   # no secret key in the browser bundle
 
 # Database (pgTAP) on the local stack
-scripts/ci/reserve-supabase-ports.sh   # CI does this first: keeps Supabase ports out of the ephemeral range (ADR 0028)
+scripts/ci/reserve-supabase-ports.sh   # CI runs it first (Linux, sudo; optional locally): keeps Supabase ports out of the ephemeral range (ADR 0028)
 npx supabase db start
 npx supabase db lint --schema public,private --level warning --fail-on warning
 npm run test:db 2>&1 | tee /tmp/pgtap.log

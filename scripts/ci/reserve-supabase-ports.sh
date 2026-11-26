@@ -7,7 +7,7 @@
 # The ports come from every uncommented `*port = N` line in supabase/config.toml, so a port added
 # there later is covered too. Only ports inside the current ephemeral range need reserving; they
 # are added to net.ipv4.ip_local_reserved_ports (existing entries are kept). A reservation only
-# stops new automatic picks, so run this as the job's first step, before npm ci and image pulls.
+# stops new automatic picks, so run it right after checkout, before npm ci and image pulls.
 # Ports already in use when it runs are listed at the end.
 #
 # Usage: scripts/ci/reserve-supabase-ports.sh [config.toml]   (needs sudo, Linux only)
@@ -54,12 +54,16 @@ for p in "${reserve[@]}"; do
 done
 
 # A socket that took a port before the reservation still holds it; show any so a later bind
-# failure has its cause in the log.
-# Read /proc/net/tcp{,6} (local address is column 2, port in hex) so no extra tool is needed.
-busy=$(awk -v list="${ports[*]}" 'BEGIN { n = split(list, a, " "); for (i = 1; i <= n; i++) want[sprintf("%04X", a[i])] = a[i] }
-  FNR > 1 { split($2, l, ":"); if (l[2] in want) print FILENAME ": port " want[l[2]] " state " $4 }' /proc/net/tcp /proc/net/tcp6 2>/dev/null || true)
-if [ -n "$busy" ]; then
-  echo "::warning::Supabase ports already in use before supabase start:"
-  echo "$busy"
-fi
+# failure has its cause in the log. Read /proc/net/tcp{,6} (local address is column 2, port in
+# hex; state is column 4) so no extra tool is needed. TIME_WAIT (06) doesn't block Docker's
+# listener, so it's only noted; any other state gets a warning annotation.
+while read -r file port state; do
+  [ -n "$file" ] || continue
+  if [ "$state" = 06 ]; then
+    echo "Note: port $port in TIME_WAIT ($file), which doesn't block a listener"
+  else
+    echo "::warning::Supabase port $port already in use before supabase start ($file, TCP state $state)"
+  fi
+done < <(awk -v list="${ports[*]}" 'BEGIN { n = split(list, a, " "); for (i = 1; i <= n; i++) want[sprintf("%04X", a[i])] = a[i] }
+  FNR > 1 { split($2, l, ":"); if (l[2] in want) print FILENAME, want[l[2]], $4 }' /proc/net/tcp /proc/net/tcp6 2>/dev/null || true)
 exit "$fail"
