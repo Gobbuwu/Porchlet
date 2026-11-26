@@ -24,11 +24,14 @@ Options for the IP (measured on Netlify branch deploys; Vercel by its documented
 | The setting only, default 1 | Vercel unchanged; a Netlify deployment without `TRUSTED_PROXY_HOPS=2` puts every visitor behind one edge address into one bucket (a lockout risk) |
 | The last entry, documented | No new code; the same shared buckets on Netlify, so one person's wrong passwords lock an account for others for 10 minutes |
 
+3. **Every Server Action passes through the proxy** (`config.matcher`, `src/proxy.ts`). The hop count in decision 1 holds only where the proxy ran, and a Server Action can be posted to any path, including the ones the proxy skipped. The skipped paths are now matched exactly (`/_next/static/…`, `/_next/image`, `/favicon.ico`; before, `/favicon.icox` or `/_next/staticfoo` were skipped too), and a second matcher runs the proxy for any request with a `Next-Action` header. Found by `/review-critical` on this change; measured on a Netlify branch deploy before the fix: a login action posted to `/favicon.icox`, `/_next/staticfoo` and `/_next/imagefoo` ran and counted against neither the visitor's address nor the made-up one, but a third address the normal path never shows (M2.md section 16).
+
 ## Consequences
 
+- E2E "the proxy skips only the exact asset paths, and runs for every Server Action" (`e2e/csp.spec.ts`) checks both matchers by the proxy's nonce CSP.
 - With no host in front (a bare `next start`), every entry is the browser's, as before (ADR 0015, gaps).
 - A wrong count is costly either way: too low shares buckets between visitors, too high lets a visitor choose their own. `.env.example` says so. An invalid value fails closed.
 - `e2e/host-headers.spec.ts` calls `clientIp`, `trustedHops`, `onNetlify` and `isHttps` directly, so CI checks the Netlify cases (two hosts, no header with an `https://` URL) that the local stack can't produce.
 - E2E "the limit follows the address the first trusted host added, not entries the browser sent" builds a chain of the configured length with every other entry changing, and expects the per-account limit to hold. CI runs it with 1 host; it was also run locally with `SITE_ID` set (2 hosts).
-- E2E "with X-Forwarded-Proto `http, https` the proxy and the login agree on the session cookie" covers the `next start` side of the HTTPS check. The Netlify side (an `https://` URL with no header) can't be reproduced on the local stack; it was checked on a Netlify branch deploy (M2.md section 15).
-- Still different on Netlify, not changed here (M2.md section 15, gaps): Netlify sends its own HSTS value (one year, `includeSubDomains; preload`) instead of ours; `/_next/static` files get none of the `next.config.ts` headers; Netlify adds a script to each page, which the CSP blocks.
+- E2E "with X-Forwarded-Proto `http, https` the proxy and the login agree on the session cookie" covers the `next start` side of the HTTPS check. The Netlify side (an `https://` URL with no header) can't be reproduced on the local stack; it was checked on a Netlify branch deploy (M2.md section 16).
+- Still different on Netlify, not changed here (M2.md section 16, gaps): Netlify sends its own HSTS value (one year, `includeSubDomains; preload`) instead of ours; `/_next/static` files get none of the `next.config.ts` headers; Netlify adds a script to each page, which the CSP blocks.

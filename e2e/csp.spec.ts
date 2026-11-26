@@ -40,6 +40,25 @@ test("every page gets a strict CSP with a fresh nonce on all its scripts", async
   }
 });
 
+test("the proxy skips only the exact asset paths, and runs for every Server Action", async ({ request }) => {
+  const proxied = async (path: string, action: boolean) => {
+    const response = action
+      ? await request.post(path, { headers: { "next-action": "0".repeat(42) }, data: "[]" })
+      : await request.get(path);
+    return /'nonce-/.test(response.headers()["content-security-policy"] ?? "");
+  };
+  // Look-alikes of the skipped paths are pages like any other.
+  for (const path of ["/favicon.icox", "/favicon.ico.txt", "/_next/staticfoo", "/_next/imagefoo"]) {
+    expect(await proxied(path, false), `GET ${path}`).toBe(true);
+  }
+  for (const path of ["/favicon.ico", "/_next/image"]) expect(await proxied(path, false), `GET ${path}`).toBe(false);
+  // A Server Action posted to a skipped path still passes through the proxy, so it reaches the app
+  // through the same hosts as on any page (ADR 0029: the visitor IP is counted from that hop).
+  for (const path of ["/favicon.ico", "/_next/image", "/_next/static/x", "/favicon.icox", "/login"]) {
+    expect(await proxied(path, true), `action POST ${path}`).toBe(true);
+  }
+});
+
 test("pages load and run their scripts with no CSP violation", async ({ page }) => {
   await page.addInitScript(() => {
     const w = window as unknown as { cspViolations: string[] };

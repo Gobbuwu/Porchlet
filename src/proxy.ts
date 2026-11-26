@@ -96,8 +96,13 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except build assets and the favicon (Next.js CSP guide). Link prefetches are
+    // Everything except build assets and the favicon (Next.js CSP guide), each matched exactly so
+    // that look-alike paths such as /favicon.icox still run the proxy. Link prefetches are
     // included: they can carry a refreshed cookie.
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static/|_next/image$|favicon\\.ico$).*)",
+    // Server Actions can be posted to any path, the skipped ones too. Run the proxy for every
+    // action so that each one reaches the app through the same hosts (ADR 0029: on Netlify the
+    // visitor IP is counted from the proxy's own hop).
+    { source: "/:path*", has: [{ type: "header", key: "next-action" }] },
   ],
 };
