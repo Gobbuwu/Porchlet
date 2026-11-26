@@ -1,5 +1,6 @@
 import { alertIn, fillLogin, newUser, signUp, signUpAndConfirm } from "./support/users";
 import type { Page } from "@playwright/test";
+import { trustedHops } from "../src/lib/auth/rate-limit";
 import { expect, randomIp, test } from "./support/test";
 
 // Porchlet's own per-visitor limits (ADR 0015). Local Supabase Auth has no per-IP limits
@@ -31,10 +32,11 @@ test("five wrong passwords block that account from that IP only", async ({ page,
   await other.close();
 });
 
-// Hosts in front of the app that append to X-Forwarded-For, as the server counts them (clientIp):
-// 1 by default, 2 on Netlify (SITE_ID), or TRUSTED_PROXY_HOPS. CI runs with 1; set SITE_ID or
-// TRUSTED_PROXY_HOPS in the shell that starts the test run to check another count.
-const HOPS = Number(process.env.TRUSTED_PROXY_HOPS) || (process.env.SITE_ID ? 2 : 1);
+// Hosts in front of the app that append to X-Forwarded-For, counted as the server counts them
+// (clientIp): 1 by default, 2 on Netlify, or TRUSTED_PROXY_HOPS. CI runs with 1. To check another
+// count, set the variable in the shell that starts the run (the server started by Playwright gets
+// the same environment), not only in .env.local.
+const HOPS = trustedHops() ?? 1;
 
 test("the limit follows the address the first trusted host added, not entries the browser sent", async ({ page }) => {
   // Netlify, and reverse proxies like nginx's $proxy_add_x_forwarded_for, keep the browser's
