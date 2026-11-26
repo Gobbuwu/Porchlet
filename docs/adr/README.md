@@ -28,5 +28,6 @@ One file per decision: `NNNN-short-title.md` with Status, Context, Options (with
 | [0026](0026-withdraw-only-unaccepted-invitations.md) | Owners can withdraw only invitations not yet accepted | Accepted |
 | [0027](0027-password-chosen-after-confirmation.md) | Sign-up asks only for the email; the password is chosen after the address is confirmed | Accepted |
 | [0028](0028-reserve-supabase-ports-in-ci.md) | CI reserves the local Supabase ports before starting the stack | Accepted |
+| [0029](0029-visitor-ip-and-https-behind-netlify.md) | The visitor IP counts the hosts in front of the app, and the proxy also reads HTTPS from its URL | Accepted |
 
 ADRs 0007-0010 are written when their milestone starts (see the M0 doc).

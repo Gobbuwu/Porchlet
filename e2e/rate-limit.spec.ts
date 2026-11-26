@@ -1,5 +1,6 @@
 import { alertIn, fillLogin, newUser, signUp, signUpAndConfirm } from "./support/users";
 import type { Page } from "@playwright/test";
+import { trustedHops } from "../src/lib/auth/rate-limit";
 import { expect, randomIp, test } from "./support/test";
 
 // Porchlet's own per-visitor limits (ADR 0015). Local Supabase Auth has no per-IP limits
@@ -29,6 +30,32 @@ test("five wrong passwords block that account from that IP only", async ({ page,
   await fillLogin(otherPage, user.email, user.password);
   await expect(otherPage).toHaveURL(/\/w$/);
   await other.close();
+});
+
+// Hosts in front of the app that append to X-Forwarded-For, counted as the server counts them
+// (clientIp): 1 by default, 2 on Netlify, or TRUSTED_PROXY_HOPS. CI runs with 1. To check another
+// count, set the variable in the shell that starts the run (the server started by Playwright gets
+// the same environment), not only in .env.local.
+const HOPS = trustedHops() ?? 1;
+
+test("the limit follows the address the first trusted host added, not entries the browser sent", async ({ page }) => {
+  // Netlify, and reverse proxies like nginx's $proxy_add_x_forwarded_for, keep the browser's
+  // X-Forwarded-For entries and append the address they saw; hosts behind them append their own
+  // (ADR 0029). Changing every other entry on each try must not give a fresh bucket.
+  const user = await signUpAndConfirm(page, "limit-chain");
+  await page.context().clearCookies();
+  const seen = randomIp();
+  const chain = () => [randomIp(), seen, ...Array.from({ length: HOPS - 1 }, randomIp)].join(", ");
+  for (let i = 0; i < 5; i++) {
+    await page.setExtraHTTPHeaders({ "x-forwarded-for": chain() });
+    await page.goto("/login");
+    await fillLogin(page, user.email, "not-the-password");
+    await expect(alertIn(page)).toHaveText(WRONG);
+  }
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": `${randomIp()}, ${chain()}` });
+  await page.goto("/login");
+  await fillLogin(page, user.email, user.password);
+  await expect(alertIn(page)).toHaveText(TOO_MANY);
 });
 
 test("twenty failed logins block that IP, and other visitors are unaffected", async ({ page, browser }) => {

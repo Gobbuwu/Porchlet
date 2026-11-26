@@ -4,6 +4,8 @@ import { expect, test } from "@playwright/test";
 // these pages render for signed-out visitors without calling Supabase Auth.
 const PAGES = ["/", "/login", "/signup", "/forgot", "/auth/confirm?type=email&token_hash=x", "/no-such-page"];
 
+const WID = "00000000-0000-4000-8000-000000000000";
+
 function nonceOf(csp: string | undefined): string {
   const m = csp?.match(/script-src 'self' 'nonce-([A-Za-z0-9+/=]+)' 'strict-dynamic'(;|$)/);
   if (!m) throw new Error(`no script nonce in CSP: ${csp}`);
@@ -37,6 +39,29 @@ test("every page gets a strict CSP with a fresh nonce on all its scripts", async
     const scripts = html.match(/<script\b[^>]*>/gi) ?? [];
     expect(scripts.length, `${path}: scripts`).toBeGreaterThan(0);
     for (const tag of scripts) expect(tag, `${path}: script without the nonce`).toContain(`nonce="${nonce}"`);
+  }
+});
+
+test("the proxy skips only the exact asset paths, and refuses posts outside the form pages", async ({ request }) => {
+  const proxied = async (path: string) =>
+    /'nonce-/.test((await request.get(path)).headers()["content-security-policy"] ?? "");
+  // Look-alikes of the skipped paths are pages like any other.
+  for (const path of ["/favicon.icox", "/favicon.ico.txt", "/_next/staticfoo", "/_next/imagefoo"]) {
+    expect(await proxied(path), `GET ${path}`).toBe(true);
+  }
+  for (const path of ["/favicon.ico", "/_next/image"]) expect(await proxied(path), `GET ${path}`).toBe(false);
+
+  // A Server Action, or a form post without JavaScript, is accepted only on the pages with forms,
+  // where the hosts in front of the app were measured (ADR 0029, decision 3). The skipped paths too:
+  // a second matcher runs the proxy for every request with a Next-Action header.
+  const action = { headers: { "next-action": "0".repeat(42) }, data: "[]" };
+  const lookAlikes = ["/login/x", "/invite/x", "/auth/confirm/x", "/w/x", `/w/${WID}/x`, `/w/${WID}x`];
+  for (const path of ["/", "/no-such-page", "/api/health", "/favicon.icox", "/favicon.ico", "/_next/image", "/_next/static/x", ...lookAlikes]) {
+    expect((await request.post(path, action)).status(), `action POST ${path}`).toBe(405);
+  }
+  expect((await request.post("/", { multipart: { $ACTION_ID_0: "" } })).status(), "form POST /").toBe(405);
+  for (const path of ["/login", "/signup", "/forgot", "/reset", "/auth/confirm", "/invite", "/w", `/w/${WID}`]) {
+    expect((await request.post(path, action)).status(), `action POST ${path}`).not.toBe(405);
   }
 });
 

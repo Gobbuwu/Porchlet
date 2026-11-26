@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { startedFromEmailedLink } from "@/lib/auth/session";
 import { contentSecurityPolicy, newNonce } from "@/lib/csp";
 import { isHttps } from "@/lib/http";
+import { isUuid } from "@/lib/workspaces";
 import {
   authCookieOptions,
   hardenCookie,
@@ -24,12 +25,26 @@ import {
 const PROTECTED = ["/w", "/settings", "/invite"];
 const SIGNED_OUT_ONLY = ["/login", "/signup"];
 
+// The pages with forms, matched exactly. Server Actions and no-JavaScript form posts go to the
+// page's own path, and the app has no other POST endpoint. On Netlify the hops in front of the app
+// differ by route (ADR 0029, decision 3): a path no page matches, such as /login/x, reaches the app
+// another way. So actions are accepted only on these paths, where the visitor IP was measured.
+const FORM_PAGES = new Set(["/login", "/signup", "/forgot", "/reset", "/auth/confirm", "/invite", "/w"]);
+
+/** True for a path where a form may post: a page in FORM_PAGES, or a workspace page `/w/<uuid>`. */
+function isFormPage(path: string): boolean {
+  return FORM_PAGES.has(path) || (path.startsWith("/w/") && isUuid(path.slice(3)));
+}
+
 const under = (path: string, prefixes: string[]) =>
   prefixes.some((p) => path === p || path.startsWith(`${p}/`));
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  const https = isHttps(request.headers);
+  if (request.method === "POST" && !isFormPage(path)) {
+    return new NextResponse(null, { status: 405, headers: { Allow: "GET, HEAD" } });
+  }
+  const https = isHttps(request.headers, request.nextUrl);
   const nonce = newNonce();
   const csp = contentSecurityPolicy(nonce, { dev: process.env.NODE_ENV === "development", https });
 
@@ -96,8 +111,12 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except build assets and the favicon (Next.js CSP guide). Link prefetches are
+    // Everything except build assets and the favicon (Next.js CSP guide), each matched exactly so
+    // that look-alike paths such as /favicon.icox still run the proxy. Link prefetches are
     // included: they can carry a refreshed cookie.
-    "/((?!_next/static|_next/image|favicon.ico).*)",
+    "/((?!_next/static/|_next/image$|favicon\\.ico$).*)",
+    // Server Actions can be posted to any path, the skipped ones too: run the proxy for every
+    // action, so that it can refuse those outside FORM_PAGES (ADR 0029, decision 3).
+    { source: "/:path*", has: [{ type: "header", key: "next-action" }] },
   ],
 };
