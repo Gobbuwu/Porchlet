@@ -4,6 +4,8 @@ import { expect, test } from "@playwright/test";
 // these pages render for signed-out visitors without calling Supabase Auth.
 const PAGES = ["/", "/login", "/signup", "/forgot", "/auth/confirm?type=email&token_hash=x", "/no-such-page"];
 
+const WID = "00000000-0000-4000-8000-000000000000";
+
 function nonceOf(csp: string | undefined): string {
   const m = csp?.match(/script-src 'self' 'nonce-([A-Za-z0-9+/=]+)' 'strict-dynamic'(;|$)/);
   if (!m) throw new Error(`no script nonce in CSP: ${csp}`);
@@ -53,11 +55,12 @@ test("the proxy skips only the exact asset paths, and refuses posts outside the 
   // where the hosts in front of the app were measured (ADR 0029, decision 3). The skipped paths too:
   // a second matcher runs the proxy for every request with a Next-Action header.
   const action = { headers: { "next-action": "0".repeat(42) }, data: "[]" };
-  for (const path of ["/", "/no-such-page", "/api/health", "/favicon.icox", "/favicon.ico", "/_next/image", "/_next/static/x"]) {
+  const lookAlikes = ["/login/x", "/invite/x", "/auth/confirm/x", "/w/x", `/w/${WID}/x`, `/w/${WID}x`];
+  for (const path of ["/", "/no-such-page", "/api/health", "/favicon.icox", "/favicon.ico", "/_next/image", "/_next/static/x", ...lookAlikes]) {
     expect((await request.post(path, action)).status(), `action POST ${path}`).toBe(405);
   }
   expect((await request.post("/", { multipart: { $ACTION_ID_0: "" } })).status(), "form POST /").toBe(405);
-  for (const path of ["/login", "/w/x"]) {
+  for (const path of ["/login", "/signup", "/forgot", "/reset", "/auth/confirm", "/invite", "/w", `/w/${WID}`]) {
     expect((await request.post(path, action)).status(), `action POST ${path}`).not.toBe(405);
   }
 });

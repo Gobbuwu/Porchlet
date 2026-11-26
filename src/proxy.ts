@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { startedFromEmailedLink } from "@/lib/auth/session";
 import { contentSecurityPolicy, newNonce } from "@/lib/csp";
 import { isHttps } from "@/lib/http";
+import { isUuid } from "@/lib/workspaces";
 import {
   authCookieOptions,
   hardenCookie,
@@ -24,17 +25,23 @@ import {
 const PROTECTED = ["/w", "/settings", "/invite"];
 const SIGNED_OUT_ONLY = ["/login", "/signup"];
 
-// The pages with forms. Server Actions and no-JavaScript form posts go to the page's own path,
-// and the app has no other POST endpoint. On Netlify the hops in front of the app differ by route
-// (ADR 0029, decision 3), so actions are accepted only where the visitor IP was measured.
-const FORM_PAGES = ["/login", "/signup", "/forgot", "/reset", "/auth/confirm", "/invite", "/w"];
+// The pages with forms, matched exactly. Server Actions and no-JavaScript form posts go to the
+// page's own path, and the app has no other POST endpoint. On Netlify the hops in front of the app
+// differ by route (ADR 0029, decision 3): a path no page matches, such as /login/x, reaches the app
+// another way. So actions are accepted only on these paths, where the visitor IP was measured.
+const FORM_PAGES = new Set(["/login", "/signup", "/forgot", "/reset", "/auth/confirm", "/invite", "/w"]);
+
+/** True for a path where a form may post: a page in FORM_PAGES, or a workspace page `/w/<uuid>`. */
+function isFormPage(path: string): boolean {
+  return FORM_PAGES.has(path) || (path.startsWith("/w/") && isUuid(path.slice(3)));
+}
 
 const under = (path: string, prefixes: string[]) =>
   prefixes.some((p) => path === p || path.startsWith(`${p}/`));
 
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
-  if (request.method === "POST" && !under(path, FORM_PAGES)) {
+  if (request.method === "POST" && !isFormPage(path)) {
     return new NextResponse(null, { status: 405, headers: { Allow: "GET, HEAD" } });
   }
   const https = isHttps(request.headers, request.nextUrl);
