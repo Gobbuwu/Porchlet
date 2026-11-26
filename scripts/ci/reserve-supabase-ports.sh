@@ -29,7 +29,7 @@ echo "Ephemeral range: $low-$high"
 
 if [ "${#reserve[@]}" -gt 0 ]; then
   current=$(cat /proc/sys/net/ipv4/ip_local_reserved_ports)
-  wanted=$(IFS=,; echo "${reserve[*]}")
+  wanted=$(printf "%s\n" "${reserve[@]}" | paste -sd, -)
   sudo sysctl -q -w net.ipv4.ip_local_reserved_ports="${current:+$current,}$wanted"
 fi
 now=$(cat /proc/sys/net/ipv4/ip_local_reserved_ports)
