@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { clientIp, onNetlify, trustedHops } from "../src/lib/auth/rate-limit";
 import { isHttps } from "../src/lib/http";
 
-// How the app reads the hosts' forwarding headers (ADR 0028). No browser or server: these call the
+// How the app reads the hosts' forwarding headers (ADR 0029). No browser or server: these call the
 // functions directly, so CI checks the Netlify cases that the local stack can't produce.
 
 const NETLIFY = { SITE_ID: "909d21e5-ed9b-4828-901d-34b8d1e26824", SITE_NAME: "porchlet" };
@@ -12,7 +12,7 @@ test("the visitor IP is the entry the first trusted host added", () => {
   // One host (Vercel overwrites the header; an appending nginx): the last entry.
   expect(clientIp(xff("198.51.100.1"), {})).toBe("198.51.100.1");
   expect(clientIp(xff("203.0.113.9, 198.51.100.1"), {})).toBe("198.51.100.1");
-  // Netlify: the CDN's entry for the visitor, then the edge function's own (measured, ADR 0028).
+  // Netlify: the CDN's entry for the visitor, then the edge function's own (measured, ADR 0029).
   expect(clientIp(xff("203.0.113.9, 198.51.100.1, 192.0.2.50"), NETLIFY)).toBe("198.51.100.1");
   expect(clientIp(xff("198.51.100.1, 192.0.2.50"), NETLIFY)).toBe("198.51.100.1");
   // Fewer entries than hops: the first one.
@@ -45,7 +45,7 @@ test("HTTPS: the header when a host sends it, else the request URL", () => {
   const https = new URL("https://porchlet.example/w");
   const http = new URL("http://127.0.0.1:3000/w");
   const proto = (value: string) => new Headers({ "x-forwarded-proto": value });
-  // Netlify's edge function: no header, an https:// URL (ADR 0028).
+  // Netlify's edge function: no header, an https:// URL (ADR 0029).
   expect(isHttps(new Headers(), https)).toBe(true);
   expect(isHttps(new Headers(), http)).toBe(false);
   expect(isHttps(new Headers())).toBe(false);

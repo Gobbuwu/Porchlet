@@ -28,7 +28,7 @@ What the numbers don't show:
 - **Host integration.** The Supabase Vercel integration sets `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ([Supabase docs](https://supabase.com/docs/guides/integrations/vercel-marketplace)), which Next.js reads with no mapping.
 - **Next.js 16 behaviour.** With the scaffold's defaults (`cacheComponents`), reading cookies outside `<Suspense>` fails the build. Wrapping the data read in `<Suspense>` fixed it.
 
-Not measured: deploys to Vercel and Netlify (no accounts were used in the test). The Vercel preview of the first PR measures the Next.js deploy; Netlify is measured at the M2 milestone check. (Measured 2026-11-26, full project check 1: the build deployed, but login and the visitor IP needed [ADR 0028](0028-visitor-ip-and-https-behind-netlify.md); M2.md section 15.)
+Not measured: deploys to Vercel and Netlify (no accounts were used in the test). The Vercel preview of the first PR measures the Next.js deploy; Netlify is measured at the M2 milestone check. (Measured 2026-11-26, full project check 1: the build deployed, but login and the visitor IP needed [ADR 0029](0029-visitor-ip-and-https-behind-netlify.md); M2.md section 15.)
 
 ## Decision
 

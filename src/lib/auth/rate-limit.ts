@@ -43,13 +43,13 @@ export function onNetlify(env: Env = process.env): boolean {
   return UUID.test(env.SITE_ID ?? "") && !!env.SITE_NAME;
 }
 
-// How many hosts in front of the app append their own entry to X-Forwarded-For (ADR 0028), or null
+// How many hosts in front of the app append their own entry to X-Forwarded-For (ADR 0029), or null
 // when TRUSTED_PROXY_HOPS is set but isn't a whole number from 1 to 10 (the limits then refuse every
 // attempt: a guessed count could share or open them). Vercel replaces the header with the one
 // address it saw ("we currently overwrite the X-Forwarded-For header", vercel.com/docs/
 // edge-network/headers/request-headers): 1. Netlify's CDN appends the visitor's address, then the
 // edge function that runs src/proxy.ts appends its own before calling the app (measured,
-// ADR 0028): 2.
+// ADR 0029): 2.
 export function trustedHops(env: Env = process.env): number | null {
   const setting = env.TRUSTED_PROXY_HOPS;
   if (setting !== undefined && setting !== "") {

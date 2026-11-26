@@ -41,7 +41,7 @@ const HOPS = trustedHops() ?? 1;
 test("the limit follows the address the first trusted host added, not entries the browser sent", async ({ page }) => {
   // Netlify, and reverse proxies like nginx's $proxy_add_x_forwarded_for, keep the browser's
   // X-Forwarded-For entries and append the address they saw; hosts behind them append their own
-  // (ADR 0028). Changing every other entry on each try must not give a fresh bucket.
+  // (ADR 0029). Changing every other entry on each try must not give a fresh bucket.
   const user = await signUpAndConfirm(page, "limit-chain");
   await page.context().clearCookies();
   const seen = randomIp();

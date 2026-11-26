@@ -1,4 +1,4 @@
-// True when the browser reached the site over HTTPS (ADR 0028). Hosts end TLS in front of the app
+// True when the browser reached the site over HTTPS (ADR 0029). Hosts end TLS in front of the app
 // and say so in X-Forwarded-Proto (Vercel; Netlify's functions, which run Server Actions and pages).
 // The header test is Next.js's own (`includes('https')`, next/dist/server/next-server.js
 // attachRequestMeta), which is how `next start` decides the scheme of the proxy's request URL.

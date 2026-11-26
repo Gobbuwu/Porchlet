@@ -301,7 +301,7 @@ test("with X-Forwarded-Proto `http, https` the proxy and the login agree on the 
   page,
   request,
 }) => {
-  // Next.js gives the proxy an https:// URL when the header contains "https" anywhere (ADR 0028), so
+  // Next.js gives the proxy an https:// URL when the header contains "https" anywhere (ADR 0029), so
   // the Server Action must read the header the same way, or the proxy looks for a cookie the login
   // never set and sends the signed-in person back to /login (the Netlify bug, from the other side).
   const proto = "http, https";
